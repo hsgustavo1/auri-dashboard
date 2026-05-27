@@ -224,6 +224,34 @@ Não há backend. Todos os dados são lidos diretamente das URLs de CSV do Googl
 
 ---
 
+## Deploy
+
+O dashboard está publicado no Vercel com deploy automático a partir do branch `main` do repositório GitHub.
+
+**URL de acesso (time interno):** https://auri-dashboard-three.vercel.app
+
+### Pipeline de atualização
+
+```
+Edição local → git commit → git push origin main
+                                    │
+                                    └─ Vercel webhook → npm run build → novo deploy (~30s)
+```
+
+### Fazer uma atualização
+
+```bash
+# Editar arquivos (ex: src/config.js para nova planilha)
+git add .
+git commit -m "chore: atualizar URLs das planilhas"
+git push origin main
+# Dashboard atualizado em ~30 segundos
+```
+
+Não há variáveis de ambiente nem secrets — toda configuração está em `src/config.js`.
+
+---
+
 ## Decisões de Design
 
 - **Sem solver LP**: o otimizador usa heurística por estágios (greedy + convergência). O problema tem ~120 variáveis, roda em < 50 ms, e os motivos textuais são interpretáveis na UI. Um solver LP/MILP pode ser reavaliado quando entrar a feature de planejamento multi-período.
