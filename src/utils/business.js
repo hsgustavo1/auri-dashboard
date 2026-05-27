@@ -619,3 +619,87 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
     },
   };
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Cenário Proposto — aplica todas as recomendações do planoGlobal a uma UG
+// e devolve o snapshot projetado (linhas + métricas agregadas).
+// Função pura: não muta `ug` nem `planoGlobal`.
+// ═══════════════════════════════════════════════════════════════════
+export function construirCenarioProposto(ug, planoGlobal) {
+  const acoesInternas = planoGlobal?.por_ug?.[ug.nome]?.acoes || [];
+  const realocOut = (planoGlobal?.realocar || []).filter(r => r.ug_origem === ug.nome);
+  const realocIn  = (planoGlobal?.realocar || []).filter(r => r.ug_destino === ug.nome);
+  const orfasIn   = (planoGlobal?.alocacao_inicial || []).filter(a => a.ug_destino === ug.nome);
+
+  const mapAjusteInterno = new Map(acoesInternas.map(a => [a.cliente.uc, a]));
+  const ucsSaindo = new Set(realocOut.map(r => r.cliente.uc));
+
+  const ucGer = ug.clientes.find(c => c.ehUCGeradora);
+  const distribuivel = Math.max(0, (ug.capacidade_kwh || 0) - (ucGer?.cmcEfetivo || 0));
+
+  const linhas = ug.clientes.map(c => {
+    if (ucsSaindo.has(c.uc)) {
+      const r = realocOut.find(x => x.cliente.uc === c.uc);
+      return {
+        cliente: c, rateioAtual: c.rateio_pct, rateioProposto: 0,
+        estado: "saindo", origemMudanca: "realocacao", destino: r.ug_destino,
+      };
+    }
+    const aj = mapAjusteInterno.get(c.uc);
+    if (aj) {
+      return {
+        cliente: c, rateioAtual: aj.de, rateioProposto: aj.para,
+        estado: "ajustado", origemMudanca: "ajuste_interno",
+      };
+    }
+    return {
+      cliente: c, rateioAtual: c.rateio_pct, rateioProposto: c.rateio_pct,
+      estado: "mantido", origemMudanca: null,
+    };
+  });
+
+  realocIn.forEach(r => {
+    const pct = distribuivel > 0
+      ? Math.min(100, Math.round((r.cliente.cmcEfetivo / distribuivel) * 100))
+      : 0;
+    linhas.push({
+      cliente: r.cliente, rateioAtual: 0, rateioProposto: pct,
+      estado: "entrando", origemMudanca: "realocacao", origem: r.ug_origem,
+    });
+  });
+
+  orfasIn.forEach(a => {
+    linhas.push({
+      cliente: a.cliente, rateioAtual: 0, rateioProposto: a.pct_inicial || 0,
+      estado: "entrando", origemMudanca: "orfa",
+    });
+  });
+
+  // Atual = só clientes que JÁ estão na UG (exclui entrantes); Proposto = exclui só os que saem.
+  const ativosAtuais   = linhas.filter(l => !l.cliente.ehUCGeradora && l.estado !== "entrando");
+  const ativosPropostos = linhas.filter(l => !l.cliente.ehUCGeradora && l.estado !== "saindo");
+
+  const demandaAtual    = ativosAtuais.reduce((s, l) => s + (l.cliente.cmcEfetivo || 0), 0);
+  const demandaProposta = ativosPropostos.reduce((s, l) => s + (l.cliente.cmcEfetivo || 0), 0);
+  const cap = ug.capacidade_kwh || 0;
+  const somaAtual    = linhas.reduce((s, l) => s + l.rateioAtual, 0);
+  const somaProposta = linhas.reduce((s, l) => s + l.rateioProposto, 0);
+
+  return {
+    ug,
+    linhas,
+    metricas: {
+      capacidade: cap,
+      demandaAtual, demandaProposta,
+      carregamentoAtual:    cap > 0 ? (demandaAtual / cap) * 100 : 0,
+      carregamentoProposto: cap > 0 ? (demandaProposta / cap) * 100 : 0,
+      somaAtual, somaProposta,
+      nClientesAtual:    ativosAtuais.length,
+      nClientesProposto: ativosPropostos.length,
+      nAjustesInternos: acoesInternas.length,
+      nEntrandoReloc: realocIn.length,
+      nEntrandoOrfa: orfasIn.length,
+      nSaindo: realocOut.length,
+    },
+  };
+}

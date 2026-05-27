@@ -9,6 +9,7 @@ O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV
 - **Visão por cliente** — saldo acumulado, status (Crítico / Baixo / Ideal / Alto / Excessivo), consumo histórico, rateio atual.
 - **Visão por UG** — composição do rateio, carregamento (% capacidade utilizada), validação de soma = 100%.
 - **Otimizador Global** — pipeline em 5 estágios que sugere ajustes incrementais de rateio, alocação de UCs órfãs e swaps entre UGs para rebalancear o sistema.
+- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs), lado a lado com o estado atual.
 
 ---
 
@@ -68,7 +69,8 @@ src/hooks/useSheetData.js   ← fetch + parse + build + otimizar
 src/App.jsx                 ← UI (React + Recharts + Tailwind)
   ├── TelaClientes
   ├── TelaUGs
-  └── TelaOtimizador
+  ├── TelaOtimizador
+  └── TelaComparativo
 ```
 
 ---
@@ -164,6 +166,21 @@ Só roda se há UGs fora da faixa 95–105% após o Estágio 2.
 
 UG subutilizada (< 95%) **só pode ser destino**, nunca origem. Sem essa restrição o algoritmo pode aceitar um swap matematicamente ótimo globalmente (reduz a soma de violações) mas operacionalmente errado — ex.: remover o único cliente de uma UG vazia para "ajudar" outra UG, deixando a original ainda mais vazia.
 
+### Aba Comparativo — Visualização Agregada das Recomendações
+
+Acima o otimizador devolve recomendações em **listas separadas** (ajustes internos, realocações, órfãs, sinalizações). A aba **Comparativo** consolida tudo isso para uma UG selecionada e mostra o cenário projetado lado a lado com o atual.
+
+Helper puro: `construirCenarioProposto(ug, planoGlobal)` em `business.js`. Para cada cliente da UG, define um `estado`:
+
+| Estado | Origem | Comportamento |
+|---|---|---|
+| `mantido` | Sem mudança no `planoGlobal` | rateio_pct igual nos dois lados |
+| `ajustado` | `planoGlobal.por_ug[ug].acoes` | rateio_pct novo = `a.para` |
+| `entrando` | `realocar` (`ug_destino`) ou `alocacao_inicial` | rateio_pct calculado proporcional ao CMC sobre o `distribuivel` (mesma lógica de `alocarOrfas`) |
+| `saindo` | `realocar` (`ug_origem`) | rateio_pct proposto = 0 |
+
+Métricas agregadas (atual vs proposto): soma de rateio, carregamento, demanda kWh, nº de clientes. A soma proposta **pode não bater 100%** — isso é intencional: o otimizador converge gradualmente (passo de 1/6 do gap por execução) e a aba honra esse comportamento em vez de mascará-lo.
+
 ### Estágio 4 — Sinalizações
 
 - 🔒 **Travado**: UC geradora GD2 ou saldo invariante → saldo prescreve, sem ação possível.
@@ -203,7 +220,7 @@ auri-dashboard/
 │   ├── hooks/
 │   │   └── useSheetData.js  # Hook principal: fetch → parse → build → otimizar
 │   └── utils/
-│       ├── business.js      # Lógica de negócio: CMC, status, buildClientes, otimizadorGlobal
+│       ├── business.js      # Lógica de negócio: CMC, status, buildClientes, otimizadorGlobal, construirCenarioProposto
 │       └── parsers.js       # Parsers CSV para cada aba da planilha
 ├── .claude/
 │   └── launch.json          # Configuração de execução para Claude Code

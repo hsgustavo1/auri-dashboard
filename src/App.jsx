@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
+import { construirCenarioProposto } from "./utils/business";
 import { UG_NOMES } from "./config";
 
 // ─── UI Atoms ────────────────────────────────────────────────
@@ -770,6 +771,295 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
   );
 }
 
+// ─── TelaComparativo ─────────────────────────────────────────
+function corCarregamento(car) {
+  if (car < 85) return "#f59e0b";
+  if (car > 105) return "#dc2626";
+  return "#10b981";
+}
+
+const ORDEM_ESTADO = { ajustado: 0, entrando: 1, saindo: 2, mantido: 3 };
+
+function BarraComparativa({ pct, maxPct, cor, fantasma }) {
+  const larg = maxPct > 0 ? (pct / maxPct) * 100 : 0;
+  if (fantasma) {
+    return (
+      <div className="h-2 bg-stone-900 relative overflow-hidden border border-dashed border-stone-700" />
+    );
+  }
+  return (
+    <div className="h-2 bg-stone-800 relative overflow-hidden">
+      <div className="absolute inset-y-0 left-0" style={{ width: `${Math.max(larg, pct > 0 ? 1 : 0)}%`, backgroundColor: cor }} />
+    </div>
+  );
+}
+
+function LinhaComparativa({ linha, maxPct, onClickCliente }) {
+  const { cliente, rateioAtual, rateioProposto, estado, origem, destino, origemMudanca } = linha;
+  const delta = rateioProposto - rateioAtual;
+  const ehGeradora = cliente.ehUCGeradora;
+
+  const corEstado = {
+    mantido: "#a8a29e",
+    ajustado: "#f59e0b",
+    entrando: "#10b981",
+    saindo: "#dc2626",
+  }[estado];
+
+  const iconeEstado = {
+    mantido: "·",
+    ajustado: delta > 0 ? "↑" : "↓",
+    entrando: "→",
+    saindo: "←",
+  }[estado];
+
+  const corBarraAtual = ehGeradora ? "#a8a29e" : (cliente.status?.cor || "#a8a29e");
+  const corBarraProposta = estado === "ajustado" ? "#f59e0b"
+    : estado === "entrando" ? "#10b981"
+    : corBarraAtual;
+
+  return (
+    <div className="grid grid-cols-[1fr_24px_1fr] gap-3 items-center py-2 px-2 hover:bg-stone-800/30 transition-colors border-b border-stone-800/40">
+      {/* lado ATUAL */}
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          {ehGeradora && <span className="text-[9px] px-1 py-px bg-amber-900/40 text-amber-300 border border-amber-700 uppercase">ger.</span>}
+          <button onClick={() => onClickCliente(cliente)} className="text-xs text-stone-300 hover:text-amber-300 truncate text-left">{cliente.nome}</button>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <BarraComparativa pct={rateioAtual} maxPct={maxPct} cor={corBarraAtual} fantasma={estado === "entrando"} />
+          </div>
+          <span className="font-mono text-xs text-stone-400 w-10 text-right">{rateioAtual}%</span>
+        </div>
+      </div>
+
+      {/* centro: ícone de estado */}
+      <div className="flex flex-col items-center justify-center text-base font-mono" style={{ color: corEstado }} title={estado}>
+        {iconeEstado}
+      </div>
+
+      {/* lado PROPOSTO */}
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[9px] uppercase tracking-[0.15em]" style={{ color: corEstado }}>
+            {estado}
+            {estado === "entrando" && origem && <span className="text-stone-500 ml-1">← {origem}</span>}
+            {estado === "entrando" && origemMudanca === "orfa" && <span className="text-stone-500 ml-1">← órfã</span>}
+            {estado === "saindo" && destino && <span className="text-stone-500 ml-1">→ {destino}</span>}
+            {estado === "ajustado" && (
+              <span className="text-stone-500 ml-1">({delta > 0 ? "+" : ""}{delta}pp)</span>
+            )}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex-1">
+            <BarraComparativa pct={rateioProposto} maxPct={maxPct} cor={corBarraProposta} fantasma={estado === "saindo"} />
+          </div>
+          <span className="font-mono text-xs w-10 text-right" style={{ color: corEstado }}>{rateioProposto}%</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ColunaMetricas({ titulo, soma, carregamento, demanda, nClientes, deltaClientes, capacidade, destacar }) {
+  const corCar = corCarregamento(carregamento);
+  const corSoma = Math.abs(soma - 100) < 0.5 ? "#10b981" : Math.abs(soma - 100) < 5 ? "#f59e0b" : "#dc2626";
+  return (
+    <div className={`border ${destacar ? "border-amber-900/50 bg-amber-950/10" : "border-stone-800 bg-stone-900/40"} p-4`}>
+      <div className="text-[10px] uppercase tracking-[0.2em] mb-3" style={{ color: destacar ? "#f59e0b" : "#a8a29e" }}>{titulo}</div>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Soma rateio</div>
+          <div className="text-2xl font-mono" style={{ color: corSoma }}>{soma.toFixed(0)}%</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Carregamento</div>
+          <div className="text-2xl font-mono" style={{ color: corCar }}>{carregamento.toFixed(0)}%</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Demanda kWh</div>
+          <div className="text-lg font-mono text-stone-200">{demanda.toFixed(0)}</div>
+          <div className="text-[10px] text-stone-600">de {capacidade.toFixed(0)} cap.</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Nº clientes</div>
+          <div className="text-lg font-mono text-stone-200">
+            {nClientes}
+            {deltaClientes !== undefined && deltaClientes !== 0 && (
+              <span className="text-xs ml-1.5" style={{ color: deltaClientes > 0 ? "#10b981" : "#dc2626" }}>
+                ({deltaClientes > 0 ? "+" : ""}{deltaClientes})
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
+  const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
+  const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
+
+  const cenario = useMemo(
+    () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
+    [ug, planoGlobal]
+  );
+
+  if (!cenario) {
+    return <p className="text-stone-500 text-sm">Nenhuma UG carregada.</p>;
+  }
+
+  const { linhas, metricas } = cenario;
+
+  const linhasOrdenadas = useMemo(() => {
+    return [...linhas].sort((a, b) => {
+      if (a.cliente.ehUCGeradora !== b.cliente.ehUCGeradora) return a.cliente.ehUCGeradora ? -1 : 1;
+      const ordA = ORDEM_ESTADO[a.estado] ?? 9;
+      const ordB = ORDEM_ESTADO[b.estado] ?? 9;
+      if (ordA !== ordB) return ordA - ordB;
+      if (a.estado === "ajustado") {
+        return Math.abs(b.rateioProposto - b.rateioAtual) - Math.abs(a.rateioProposto - a.rateioAtual);
+      }
+      return b.rateioProposto - a.rateioProposto || b.rateioAtual - a.rateioAtual;
+    });
+  }, [linhas]);
+
+  const maxPct = Math.max(
+    50,
+    ...linhas.map(l => Math.max(l.rateioAtual, l.rateioProposto))
+  );
+
+  const totalMudancas = metricas.nAjustesInternos + metricas.nEntrandoReloc + metricas.nEntrandoOrfa + metricas.nSaindo;
+  const deltaClientes = metricas.nClientesProposto - metricas.nClientesAtual;
+
+  return (
+    <div>
+      <div className="mb-6 flex items-end justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl text-stone-200 mb-1" style={{ fontFamily: "Georgia, serif" }}>Comparativo Atual vs Proposto</h2>
+          <p className="text-xs text-stone-500">
+            Projeta o estado da UG após aplicar <strong className="text-stone-300">todas</strong> as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs).
+          </p>
+        </div>
+        <div>
+          <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
+          <select
+            value={ugNome}
+            onChange={e => setUgNome(e.target.value)}
+            className="bg-stone-900 border border-stone-700 px-4 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60 min-w-[200px]"
+          >
+            {ugsValidadas.map(u => (
+              <option key={u.nome} value={u.nome}>{u.nome} · {u.tipo}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="mb-6 border border-stone-800 bg-stone-900/30 p-5">
+        <div className="flex items-baseline justify-between mb-3 flex-wrap gap-3">
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500">UG selecionada <span className="text-amber-400/70 ml-2">{ug.tipo}</span></p>
+            <h3 className="text-3xl text-stone-100" style={{ fontFamily: "Georgia, serif" }}>{ug.nome}</h3>
+          </div>
+          <div className="flex gap-4 text-[11px] uppercase tracking-[0.15em]">
+            {totalMudancas === 0 ? (
+              <span className="text-emerald-400">✓ Nenhuma mudança proposta</span>
+            ) : (
+              <>
+                {metricas.nAjustesInternos > 0 && <span className="text-amber-400"><span className="font-mono">{metricas.nAjustesInternos}</span> ajuste{metricas.nAjustesInternos > 1 ? "s" : ""} interno{metricas.nAjustesInternos > 1 ? "s" : ""}</span>}
+                {metricas.nEntrandoReloc > 0 && <span className="text-emerald-400"><span className="font-mono">{metricas.nEntrandoReloc}</span> entrando (realoc.)</span>}
+                {metricas.nEntrandoOrfa > 0 && <span className="text-cyan-400"><span className="font-mono">{metricas.nEntrandoOrfa}</span> órfã{metricas.nEntrandoOrfa > 1 ? "s" : ""}</span>}
+                {metricas.nSaindo > 0 && <span className="text-red-400"><span className="font-mono">{metricas.nSaindo}</span> saindo</span>}
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+        <ColunaMetricas
+          titulo="ATUAL"
+          soma={metricas.somaAtual}
+          carregamento={metricas.carregamentoAtual}
+          demanda={metricas.demandaAtual}
+          nClientes={metricas.nClientesAtual}
+          capacidade={metricas.capacidade}
+        />
+        <ColunaMetricas
+          titulo="PROPOSTO"
+          soma={metricas.somaProposta}
+          carregamento={metricas.carregamentoProposto}
+          demanda={metricas.demandaProposta}
+          nClientes={metricas.nClientesProposto}
+          deltaClientes={deltaClientes}
+          capacidade={metricas.capacidade}
+          destacar
+        />
+      </div>
+
+      <div className="border border-stone-800 bg-stone-900/30">
+        <div className="grid grid-cols-[1fr_24px_1fr] px-3 py-3 border-b border-stone-800 bg-stone-900 text-[10px] uppercase tracking-[0.18em] text-stone-500">
+          <div>Atual — rateio por cliente</div>
+          <div></div>
+          <div>Proposto — após aplicar otimizador</div>
+        </div>
+        <div className="px-2">
+          {linhasOrdenadas.map((l, i) => (
+            <LinhaComparativa
+              key={`${l.cliente.uc}-${l.estado}-${i}`}
+              linha={l}
+              maxPct={maxPct}
+              onClickCliente={onClickCliente}
+            />
+          ))}
+        </div>
+        <div className="px-4 py-3 border-t border-stone-800 bg-stone-900/60 grid grid-cols-[1fr_24px_1fr] text-xs">
+          <div className="font-mono">
+            <span className="text-stone-500 uppercase tracking-[0.15em] text-[10px] mr-2">Soma</span>
+            <span className={Math.abs(metricas.somaAtual - 100) < 0.5 ? "text-emerald-400" : "text-red-400"}>{metricas.somaAtual.toFixed(0)}%</span>
+          </div>
+          <div></div>
+          <div className="font-mono">
+            <span className="text-stone-500 uppercase tracking-[0.15em] text-[10px] mr-2">Soma</span>
+            <span className={Math.abs(metricas.somaProposta - 100) < 0.5 ? "text-emerald-400" : Math.abs(metricas.somaProposta - 100) < 5 ? "text-amber-400" : "text-red-400"}>{metricas.somaProposta.toFixed(0)}%</span>
+            {Math.abs(metricas.somaProposta - 100) >= 0.5 && (
+              <span className="text-[10px] text-stone-500 ml-2">(otimizador converge incrementalmente — não força 100% em uma execução)</span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-6 border border-stone-800 p-4 bg-stone-900/20">
+        <h4 className="text-[10px] uppercase tracking-[0.2em] text-stone-500 mb-3">Legenda</h4>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-base" style={{ color: "#a8a29e" }}>·</span>
+            <span className="text-stone-300">Mantido</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-base" style={{ color: "#f59e0b" }}>↑↓</span>
+            <span className="text-stone-300">Ajuste interno de %</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-base" style={{ color: "#10b981" }}>→</span>
+            <span className="text-stone-300">Entrando (realoc. ou órfã)</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-base" style={{ color: "#dc2626" }}>←</span>
+            <span className="text-stone-300">Saindo (realocado p/ outra UG)</span>
+          </div>
+        </div>
+        <p className="text-[11px] text-stone-500 mt-3 leading-relaxed">
+          % de entrantes via realocação é calculado proporcional ao CMC sobre o distribuível da UG destino (mesma lógica das órfãs). Barras tracejadas indicam ausência do cliente naquele lado da comparação.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── App principal ────────────────────────────────────────────
 export default function App() {
   const { data, loading, error, refresh, lastUpdated } = useSheetData();
@@ -848,6 +1138,9 @@ export default function App() {
                 <span className="ml-1.5 text-[9px] px-1 py-px bg-amber-500/20 text-amber-400 border border-amber-500/30">{planoGlobal.realocar.length}</span>
               )}
             </NavBtn>
+            <NavBtn ativo={aba === "comparativo"} onClick={() => setAba("comparativo")}>
+              Comparativo
+            </NavBtn>
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
           </div>
         </div>
@@ -898,6 +1191,10 @@ export default function App() {
 
         {aba === "otimizador" && (
           <TelaOtimizador ugsValidadas={ugsValidadas} planoGlobal={planoGlobal} onVerUG={handleVerUG} onClickCliente={setClienteSel} />
+        )}
+
+        {aba === "comparativo" && (
+          <TelaComparativo ugsValidadas={ugsValidadas} planoGlobal={planoGlobal} onClickCliente={setClienteSel} />
         )}
 
         {aba === "clientes" && (
