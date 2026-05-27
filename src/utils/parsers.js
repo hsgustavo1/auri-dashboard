@@ -1,0 +1,113 @@
+import Papa from "papaparse";
+import { RE_MES, TIPO_GD, UC_GERADORA_ANTIGA, UC_GERADORA_NOVA } from "../config";
+
+export function parseBR(v) {
+  if (v === null || v === undefined || v === "" || v === "Sem Fatura") return null;
+  if (typeof v === "number") return v;
+  const s = String(v).replace(/\s/g, "").replace("R$", "").replace("%", "");
+  if (s.includes(",") && s.includes(".")) return parseFloat(s.replace(/\./g, "").replace(",", "."));
+  if (s.includes(",")) return parseFloat(s.replace(",", "."));
+  return parseFloat(s) || null;
+}
+
+function parseCSV(text) {
+  const r = Papa.parse(text.trim(), {
+    header: true,
+    skipEmptyLines: true,
+    transformHeader: h => h.trim(),
+    transform: v => v.trim(),
+  });
+  return r.data;
+}
+
+// S_C_Analitico: linha 0 = título lixo, linha 1 = cabeçalho real
+export function parseSCAnalitico(text) {
+  const lines = text.split("\n");
+  const dataLines = lines.slice(1).join("\n");
+  const rows = parseCSV(dataLines);
+  const result = {};
+
+  rows.forEach(r => {
+    const ucAnt = (r["UC antiga"] || "").trim();
+    const ucNov = (r["UC nova"] || "").trim();
+    if (!ucAnt && !ucNov) return;
+
+    const meses = Object.keys(r).filter(k => RE_MES.test(k));
+    const saldoHist = {};
+    meses.forEach(m => {
+      const v = r[m];
+      saldoHist[m] = (v === "Sem Fatura" || v === "") ? null : parseBR(v);
+    });
+
+    const entry = {
+      uc_antiga: ucAnt || ucNov,
+      uc_nova: ucNov,
+      ug: (r["UG ATUAL"] || "").trim(),
+      rateio_pct: parseBR(r["% ATUAL"]) || 0,
+      media_consumo: parseBR(r["Média de Consumo"]) || 0,
+      saldo_historico: saldoHist,
+      meses,
+    };
+
+    if (ucAnt) result[ucAnt] = entry;
+    if (ucNov) result[ucNov] = entry;
+  });
+
+  return result;
+}
+
+export function parseFatAuri(text) {
+  const rows = parseCSV(text);
+  const data = {};
+  rows.forEach(r => {
+    const uc = (r["UC"] || "").trim();
+    const mes = (r["Mês/Ano"] || "").trim();
+    if (!uc || !mes) return;
+    if (!data[uc]) data[uc] = {};
+    data[uc][mes] = {
+      consumo: parseBR(r["Consumo"]),
+      saldo: parseBR(r["Saldo de Créditos"]),
+    };
+  });
+  return data;
+}
+
+// T_Info_Gerais: linha 0 = título, linha 1 = cabeçalho
+export function parseInfoGerais(text) {
+  const lines = text.split("\n");
+  const dataLines = lines.slice(1).join("\n");
+  const rows = parseCSV(dataLines);
+  const ugs = {};
+  rows.forEach(r => {
+    const nome = (r["UFV"] || "").trim();
+    if (!nome || !TIPO_GD[nome]) return;
+    ugs[nome] = {
+      nome, tipo: TIPO_GD[nome],
+      capacidade_kwh: parseBR(r["Geração Mensal Média (kWh)"]) || 0,
+      ocupacao_atual: parseBR(r["Ocupação (kWh)"]) || 0,
+    };
+  });
+  return ugs;
+}
+
+export function parseClientes(text) {
+  const rows = parseCSV(text);
+  return rows
+    .map(r => {
+      const uc = (r["Unidade Consumidora"] || "").trim();
+      const geradora = (r["Geradora"] || "").trim();
+      const inativo = geradora.toUpperCase().includes("INATIVO");
+      const descontoStr = (r["Valor do desconto"] || "0").replace("%", "").replace(",", ".").trim();
+      const desconto = parseFloat(descontoStr) || 0;
+      return {
+        uc,
+        nome: (r["Cliente"] || "").trim(),
+        geradora: inativo ? null : (TIPO_GD[geradora] ? geradora : null),
+        desconto_pct: desconto,
+        emite_cobranca: (r["Emitir Cobrança?"] || "").toUpperCase().includes("SIM"),
+        cpf_cnpj: (r["CPF/CNPJ"] || "").trim(),
+        inativo,
+      };
+    })
+    .filter(c => c.uc && c.nome && !c.inativo);
+}
