@@ -183,7 +183,20 @@ Helper puro em `business.js`. Para cada cliente da UG, define um `estado`:
 
 Cada linha é enriquecida com `cmc`, `pulmaoAtualMeses` (= saldo / CMC) e `projecao` (output de `projetarHorizonte`, ver abaixo).
 
-Métricas agregadas (atual vs proposto): soma de rateio, carregamento, demanda kWh, nº de clientes. A soma proposta **pode não bater 100%** — isso é intencional: o otimizador converge gradualmente (passo de 1/6 do gap por execução) e a aba honra esse comportamento em vez de mascará-lo.
+#### Renormalização: soma proposta = 100% (regra Equatorial)
+
+O otimizador opera em convergência incremental (passo de 1/6 do gap) e seu output bruto pode somar ≠ 100%. Operacionalmente isso é impossível — toda geração precisa ser alocada e a planilha submetida à Equatorial **obrigatoriamente** soma 100%.
+
+A aba Comparativo transforma o output bruto em um cenário operável renormalizando os rateios após aplicar todas as recomendações:
+
+- **Fixas (preservadas):** UC geradora (rateio fixo por regulação), clientes saindo (= 0%), clientes fixa-orientada (cliente novo sem CMC histórico com rateio manual).
+- **Flexíveis (renormalizados):** todos os demais. Sofrem escala proporcional para que a soma total feche exatamente 100%.
+
+Efeito colateral honesto e exibido na UI: clientes "mantidos" pelo otimizador podem ter o % reduzido para caber no orçamento — esses aparecem como `ajustado` com a anotação **"redistrib. p/ soma=100%"**. Já clientes cujo ajuste do otimizador foi exatamente cancelado pela renormalização voltam ao estado `mantido`.
+
+**Conceito importante (não confundir):** `Soma rateio` é a alocação de % das UCs, deve **sempre** fechar 100%. `Carregamento` é demanda (CMC) ÷ capacidade da UG, pode ficar > 100% quando há sobrecarga real (mais consumo do que a UG gera). São métricas diferentes que respondem a perguntas diferentes.
+
+Métricas agregadas (atual vs proposto): soma de rateio (proposto = 100% após renorm), carregamento, demanda kWh, nº de clientes.
 
 #### `projetarHorizonte(cliente, novoRateio, distribuivel)`
 

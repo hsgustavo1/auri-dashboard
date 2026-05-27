@@ -893,7 +893,9 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
             {estado === "entrando" && origemMudanca === "orfa" && <span className="text-stone-500 ml-1">← órfã</span>}
             {estado === "saindo" && destino && <span className="text-stone-500 ml-1">→ {destino}</span>}
             {estado === "ajustado" && (
-              <span className="text-stone-500 ml-1">({delta > 0 ? "+" : ""}{delta}pp)</span>
+              <span className="text-stone-500 ml-1">
+                ({delta > 0 ? "+" : ""}{delta}pp{origemMudanca === "renormalizacao" ? " · redistrib. p/ soma=100%" : ""})
+              </span>
             )}
           </span>
         </div>
@@ -1204,10 +1206,8 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
           <div></div>
           <div className="font-mono">
             <span className="text-stone-500 uppercase tracking-[0.15em] text-[10px] mr-2">Soma</span>
-            <span className={Math.abs(metricas.somaProposta - 100) < 0.5 ? "text-emerald-400" : Math.abs(metricas.somaProposta - 100) < 5 ? "text-amber-400" : "text-red-400"}>{metricas.somaProposta.toFixed(0)}%</span>
-            {Math.abs(metricas.somaProposta - 100) >= 0.5 && (
-              <span className="text-[10px] text-stone-500 ml-2">(otimizador converge incrementalmente — não força 100% em uma execução)</span>
-            )}
+            <span className={Math.abs(metricas.somaProposta - 100) < 0.5 ? "text-emerald-400" : "text-red-400"}>{metricas.somaProposta.toFixed(0)}%</span>
+            <span className="text-[10px] text-stone-500 ml-2">(renormalizado p/ regra Equatorial: soma = 100%)</span>
           </div>
         </div>
       </div>
@@ -1237,7 +1237,10 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
         <p className="text-[11px] text-stone-500 mt-3 leading-relaxed">
           % de entrantes via realocação é calculado proporcional ao CMC sobre o distribuível da UG destino (mesma lógica das órfãs). Barras tracejadas indicam ausência do cliente naquele lado da comparação.
         </p>
-        <div className="mt-3 pt-3 border-t border-stone-800 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-stone-500 leading-relaxed">
+        <div className="mt-3 pt-3 border-t border-stone-800 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-[11px] text-stone-500 leading-relaxed">
+          <div className="md:col-span-2 border-l-2 border-amber-700/40 pl-2 mb-1">
+            <strong className="text-amber-300">Soma rateio</strong> ≠ <strong className="text-amber-300">Carregamento</strong>. Soma é a alocação de % das UCs e <em>obrigatoriamente</em> fecha 100% (regra Equatorial). Carregamento é demanda (CMC) ÷ capacidade — pode ficar &gt; 100% se a UG estiver sobrecarregada. O cenário proposto é renormalizado para fechar 100% mesmo quando o output bruto do otimizador (convergência incremental) somaria diferente.
+          </div>
           <div>
             <strong className="text-stone-300">CMC</strong>: consumo médio mensal (kWh) do cliente — média ponderada dos últimos 12 meses.
           </div>

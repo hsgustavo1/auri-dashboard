@@ -704,11 +704,70 @@ export function construirCenarioProposto(ug, planoGlobal) {
   });
 
   // Atual = só clientes que JÁ estão na UG (exclui entrantes); Proposto = exclui só os que saem.
-  // Enriquece cada linha com métricas de saúde do cliente e projeção do novo rateio.
-  // Para "saindo", a projeção do destino não é conhecida — fica null e a UI mostra "→ destino".
+  // Enriquece cada linha com métricas de saúde do cliente.
   linhas.forEach(l => {
     l.cmc = l.cliente.cmcEfetivo || 0;
     l.pulmaoAtualMeses = l.cmc > 0 ? (l.cliente.saldo || 0) / l.cmc : null;
+  });
+
+  // ─── Renormalização: soma proposta DEVE ser 100% (regulação) ──────────
+  // O otimizador opera em convergência incremental (1/6 do gap) e seu output
+  // bruto pode somar ≠ 100%. Aqui transformamos isso em um cenário OPERÁVEL:
+  // toda a sugestão preservada nas FIXAS, e o restante é distribuído
+  // proporcionalmente aos AJUSTÁVEIS + ENTRANTES para fechar exatamente 100%.
+  // Efeito colateral honesto: clientes "mantidos" podem ter o % reduzido (ou
+  // aumentado) para caber no orçamento — isso aparece na UI como "ajustado".
+  const ehFixaOrient = l => l.cmc === 0 && (l.cliente.media_consumo || 0) > 0 && l.rateioAtual > 0;
+  const ehFixaParaRenorm = l => l.cliente.ehUCGeradora || l.estado === "saindo" || ehFixaOrient(l);
+
+  const fixasRn = linhas.filter(ehFixaParaRenorm);
+  const flexRn  = linhas.filter(l => !ehFixaParaRenorm(l));
+  const sFixaRn = fixasRn.reduce((s, l) => s + l.rateioProposto, 0);
+  const sFlexAlvo = Math.max(0, 100 - sFixaRn);
+  const sFlexRaw  = flexRn.reduce((s, l) => s + l.rateioProposto, 0);
+
+  if (flexRn.length > 0) {
+    if (sFlexRaw > 0) {
+      const fator = sFlexAlvo / sFlexRaw;
+      flexRn.forEach(l => { l.rateioProposto = l.rateioProposto * fator; });
+    } else if (sFlexAlvo > 0) {
+      // Edge case: todos os flexíveis estão a 0%. Distribui pro-rata pelo CMC.
+      const elegiveis = flexRn.filter(l => l.cmc > 0);
+      const totalCmc = elegiveis.reduce((s, l) => s + l.cmc, 0);
+      if (totalCmc > 0) elegiveis.forEach(l => { l.rateioProposto = (l.cmc / totalCmc) * sFlexAlvo; });
+    }
+  }
+
+  // Arredonda para inteiro e zera o resíduo distribuindo ±1pp nos maiores valores.
+  linhas.forEach(l => { l.rateioProposto = Math.round(l.rateioProposto); });
+  let residuo = 100 - linhas.reduce((s, l) => s + l.rateioProposto, 0);
+  if (residuo !== 0 && flexRn.length > 0) {
+    const ord = [...flexRn].sort((a, b) => b.rateioProposto - a.rateioProposto);
+    let i = 0, guard = 500;
+    while (residuo !== 0 && guard-- > 0) {
+      const l = ord[i % ord.length];
+      if (residuo > 0) { l.rateioProposto += 1; residuo -= 1; }
+      else if (l.rateioProposto > 0) { l.rateioProposto -= 1; residuo += 1; }
+      i++;
+    }
+  }
+
+  // Re-deriva estado após renormalização:
+  //  - "mantido" → "ajustado" se a renorm mudou o %.
+  //  - "ajustado" → "mantido" se o efeito líquido (otimizador + renorm) zerou.
+  linhas.forEach(l => {
+    if (l.estado === "saindo" || l.estado === "entrando") return;
+    if (l.rateioProposto === l.rateioAtual) {
+      l.estado = "mantido";
+      l.origemMudanca = null;
+    } else if (l.estado === "mantido") {
+      l.estado = "ajustado";
+      l.origemMudanca = "renormalizacao";
+    }
+  });
+
+  // Projeção do horizonte usa o rateio FINAL (já renormalizado).
+  linhas.forEach(l => {
     l.projecao = (l.estado === "saindo") ? null : projetarHorizonte(l.cliente, l.rateioProposto, distribuivel);
   });
 
@@ -804,10 +863,12 @@ export function analisarCenario(cenario, n = 6) {
       mensagem: `Carregamento permanecerá em ${car.toFixed(0)}% (faixa-alvo: ${OPT_PARAMS.FAIXA_ALVO_MIN}–${OPT_PARAMS.FAIXA_ALVO_MAX}%) — UG segue sobrecarregada, clientes drenarão saldo.` });
   }
 
+  // Soma proposta deveria sempre ser 100% após renormalização. Só dispara se houver
+  // patologia (ex.: S_fixa > 100%, ou nenhum cliente flexível para absorver o ajuste).
   const drift = metricas.somaProposta - 100;
-  if (Math.abs(drift) >= 5) {
-    riscos.push({ tipo: "soma_off", severidade: Math.abs(drift) >= 15 ? "alta" : "media",
-      mensagem: `Soma de rateio proposta em ${metricas.somaProposta.toFixed(0)}% (esperado 100%). ${drift > 0 ? "Excesso será aparado" : "Falta será preenchida"} em nova execução do otimizador.` });
+  if (Math.abs(drift) >= 1) {
+    riscos.push({ tipo: "soma_off", severidade: "alta",
+      mensagem: `Soma de rateio proposta em ${metricas.somaProposta.toFixed(0)}% — renormalização não conseguiu fechar 100% (verifique se há clientes flexíveis suficientes ou se as fixas já excedem 100%).` });
   }
 
   linhas.forEach(l => {
