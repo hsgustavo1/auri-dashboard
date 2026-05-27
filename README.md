@@ -9,7 +9,7 @@ O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV
 - **Visão por cliente** — saldo acumulado, status (Crítico / Baixo / Ideal / Alto / Excessivo), consumo histórico, rateio atual.
 - **Visão por UG** — composição do rateio, carregamento (% capacidade utilizada), validação de soma = 100%.
 - **Otimizador Global** — pipeline em 5 estágios que sugere ajustes incrementais de rateio, alocação de UCs órfãs e swaps entre UGs para rebalancear o sistema.
-- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs), lado a lado com o estado atual.
+- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs), lado a lado com o estado atual. Inclui distribuição de saúde do portfólio projetada em 6 meses, pulmão coletivo, projeção por cliente, e lista de riscos remanescentes.
 
 ---
 
@@ -170,7 +170,9 @@ UG subutilizada (< 95%) **só pode ser destino**, nunca origem. Sem essa restri�
 
 Acima o otimizador devolve recomendações em **listas separadas** (ajustes internos, realocações, órfãs, sinalizações). A aba **Comparativo** consolida tudo isso para uma UG selecionada e mostra o cenário projetado lado a lado com o atual.
 
-Helper puro: `construirCenarioProposto(ug, planoGlobal)` em `business.js`. Para cada cliente da UG, define um `estado`:
+#### Núcleo: `construirCenarioProposto(ug, planoGlobal)`
+
+Helper puro em `business.js`. Para cada cliente da UG, define um `estado`:
 
 | Estado | Origem | Comportamento |
 |---|---|---|
@@ -179,7 +181,32 @@ Helper puro: `construirCenarioProposto(ug, planoGlobal)` em `business.js`. Para 
 | `entrando` | `realocar` (`ug_destino`) ou `alocacao_inicial` | rateio_pct calculado proporcional ao CMC sobre o `distribuivel` (mesma lógica de `alocarOrfas`) |
 | `saindo` | `realocar` (`ug_origem`) | rateio_pct proposto = 0 |
 
+Cada linha é enriquecida com `cmc`, `pulmaoAtualMeses` (= saldo / CMC) e `projecao` (output de `projetarHorizonte`, ver abaixo).
+
 Métricas agregadas (atual vs proposto): soma de rateio, carregamento, demanda kWh, nº de clientes. A soma proposta **pode não bater 100%** — isso é intencional: o otimizador converge gradualmente (passo de 1/6 do gap por execução) e a aba honra esse comportamento em vez de mascará-lo.
+
+#### `projetarHorizonte(cliente, novoRateio, distribuivel)`
+
+Estima quanto tempo a nova alocação % sobrevive até o saldo do cliente virar problema, dado o consumo médio. Retorna `{ tipo, meses }`:
+
+| Tipo | Significado |
+|---|---|
+| `estavel` | net mensal < 5% do CMC — recebimento ≈ consumo, sem problema previsto |
+| `ate_critico` | saldo drenando — meses até razão < 0,5× CMC (provável fatura cheia) |
+| `ate_excessivo` | saldo acumulando — meses até razão > 6× CMC (risco de expirar em 60 meses) |
+| `ja_critico` / `ja_excessivo` | cliente já está fora da faixa hoje, antes mesmo de aplicar |
+
+#### `analisarCenario(cenario, n = 6)`
+
+Síntese de qualidade do cenário projetado N meses à frente (padrão: 6 meses, o intervalo típico de re-execução do otimizador). Devolve três famílias de insight:
+
+1. **Distribuição de saúde do portfólio** (`distAtual`, `distProposta`): contagem de clientes em cada status (`critico`, `baixo`, `ideal`, `alto`, `excessivo`). Permite responder "este plano melhora ou apenas reorganiza o portfólio?".
+
+2. **Pulmão coletivo da UG** (`pulmaoAtual`, `pulmaoProposto`): média ponderada (pelo CMC) de meses de saldo dos clientes ajustáveis. Indica quão folgada a UG está como um todo.
+
+3. **Riscos remanescentes** (`riscos[]`): lista de problemas que persistem mesmo após aplicar tudo — carregamento fora da faixa, soma de rateio ≠ 100%, clientes que continuam em `critico` ou `excessivo` em N meses (nominalmente identificados).
+
+Implementação usa `projetarSaldoEmNMeses(cliente, novoRateio, distribuivel, n)` para calcular o saldo de cada cliente em N meses (`saldo + n × (recebido − consumido)`, com piso em zero) e então `statusSaldo` para classificar.
 
 ### Estágio 4 — Sinalizações
 
@@ -220,7 +247,7 @@ auri-dashboard/
 │   ├── hooks/
 │   │   └── useSheetData.js  # Hook principal: fetch → parse → build → otimizar
 │   └── utils/
-│       ├── business.js      # Lógica de negócio: CMC, status, buildClientes, otimizadorGlobal, construirCenarioProposto
+│       ├── business.js      # Lógica de negócio: CMC, status, buildClientes, otimizadorGlobal, construirCenarioProposto, projetarHorizonte, projetarSaldoEmNMeses, analisarCenario
 │       └── parsers.js       # Parsers CSV para cada aba da planilha
 ├── .claude/
 │   └── launch.json          # Configuração de execução para Claude Code

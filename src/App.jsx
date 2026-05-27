@@ -2,7 +2,7 @@ import { useState, useMemo } from "react";
 import { RefreshCw } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
-import { construirCenarioProposto } from "./utils/business";
+import { construirCenarioProposto, analisarCenario } from "./utils/business";
 import { UG_NOMES } from "./config";
 
 // ─── UI Atoms ────────────────────────────────────────────────
@@ -956,6 +956,123 @@ function ColunaMetricas({ titulo, soma, carregamento, demanda, nClientes, deltaC
   );
 }
 
+const NIVEIS_STATUS = [
+  ["critico",   "Crítico",   "#dc2626"],
+  ["baixo",     "Baixo",     "#f59e0b"],
+  ["ideal",     "Ideal",     "#10b981"],
+  ["alto",      "Alto",      "#3b82f6"],
+  ["excessivo", "Excessivo", "#7c3aed"],
+];
+
+function CaixaDistribuicao({ dist, destacar, comparacao }) {
+  return (
+    <div className="grid grid-cols-5 gap-1.5">
+      {NIVEIS_STATUS.map(([k, lbl, cor]) => {
+        const valor = dist[k];
+        const delta = comparacao ? valor - comparacao[k] : null;
+        const corDelta = delta == null ? null
+          : delta > 0 ? (k === "critico" || k === "excessivo" ? "#dc2626" : "#10b981")
+          : delta < 0 ? (k === "critico" || k === "excessivo" ? "#10b981" : "#a8a29e")
+          : null;
+        return (
+          <div key={k} className={`border ${destacar ? "border-amber-900/30" : "border-stone-800"} bg-stone-950 px-2 py-2 text-center`}>
+            <div className="h-1 mb-1.5 mx-auto" style={{ backgroundColor: valor > 0 ? cor : "#292524", width: "60%" }} />
+            <div className="text-xl font-mono" style={{ color: valor > 0 ? cor : "#57534e" }}>{valor}</div>
+            <div className="text-[9px] uppercase tracking-wider text-stone-500">{lbl}</div>
+            {delta !== null && delta !== 0 && (
+              <div className="text-[9px] mt-0.5 font-mono" style={{ color: corDelta }}>
+                {delta > 0 ? "+" : ""}{delta}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PainelDistribuicao({ analise }) {
+  const { distAtual, distProposta, pulmaoAtual, pulmaoProposto, horizonte } = analise;
+  const dPulmao = pulmaoProposto - pulmaoAtual;
+  return (
+    <div className="border border-stone-800 bg-stone-900/30 p-5 mb-6">
+      <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
+        <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400">Distribuição de Saúde do Portfólio</h3>
+        <p className="text-[10px] text-stone-600">cenário proposto projeta saldo {horizonte}m à frente com o novo rateio</p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-[1fr_auto_1fr] gap-5 items-start">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-2">Atual (hoje)</div>
+          <CaixaDistribuicao dist={distAtual} />
+          <div className="mt-2.5 text-[11px] text-stone-500">
+            Pulmão coletivo da UG: <span className="font-mono text-stone-300">{pulmaoAtual.toFixed(1)}m</span>
+          </div>
+        </div>
+        <div className="text-stone-600 text-2xl font-mono text-center pt-8 hidden md:block">→</div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-amber-400/80 mb-2">Projetado em {horizonte}m</div>
+          <CaixaDistribuicao dist={distProposta} destacar comparacao={distAtual} />
+          <div className="mt-2.5 text-[11px] text-stone-500">
+            Pulmão coletivo da UG: <span className="font-mono text-stone-300">{pulmaoProposto.toFixed(1)}m</span>
+            {Math.abs(dPulmao) >= 0.1 && (
+              <span className="ml-1.5 font-mono" style={{ color: dPulmao > 0 ? "#10b981" : "#f59e0b" }}>
+                ({dPulmao > 0 ? "+" : ""}{dPulmao.toFixed(1)})
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PainelRiscos({ riscos, horizonte, onClickCliente }) {
+  if (!riscos.length) {
+    return (
+      <div className="mt-6 border border-emerald-900/40 bg-emerald-950/20 px-5 py-4">
+        <div className="flex items-center gap-3">
+          <div className="w-2 h-2 rounded-full bg-emerald-500" />
+          <p className="text-sm text-emerald-300">Sem riscos remanescentes — em {horizonte} meses a UG fica equilibrada e todos os clientes saudáveis.</p>
+        </div>
+      </div>
+    );
+  }
+  const cores = {
+    alta:  { borda: "border-red-900/60 bg-red-950/15",     icon: "text-red-400",   label: "text-red-300"   },
+    media: { borda: "border-amber-900/60 bg-amber-950/15", icon: "text-amber-400", label: "text-amber-300" },
+  };
+  return (
+    <div className="mt-6 border border-stone-800 bg-stone-900/30 p-5">
+      <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
+        <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400">Riscos Remanescentes</h3>
+        <p className="text-[10px] text-stone-600">o que continua problemático em {horizonte}m mesmo após aplicar tudo</p>
+      </div>
+      <div className="space-y-2">
+        {riscos.map((r, i) => {
+          const c = cores[r.severidade] || cores.media;
+          return (
+            <div key={i} className={`border ${c.borda} px-3 py-2.5 flex items-start gap-3`}>
+              <span className={`${c.icon} text-base shrink-0 leading-none mt-0.5`}>⚠</span>
+              <div className="flex-1 text-xs leading-relaxed">
+                {r.cliente ? (
+                  <>
+                    <button onClick={() => onClickCliente(r.cliente)} className={`${c.label} hover:underline mr-1 font-medium`}>
+                      {r.cliente.nome}
+                    </button>
+                    <span className="text-stone-400">— {r.mensagem}</span>
+                  </>
+                ) : (
+                  <span className={c.label}>{r.mensagem}</span>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
   const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
   const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
@@ -963,6 +1080,10 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
   const cenario = useMemo(
     () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
     [ug, planoGlobal]
+  );
+  const analise = useMemo(
+    () => (cenario ? analisarCenario(cenario, 6) : null),
+    [cenario]
   );
 
   if (!cenario) {
@@ -1057,6 +1178,8 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
         />
       </div>
 
+      {analise && <PainelDistribuicao analise={analise} />}
+
       <div className="border border-stone-800 bg-stone-900/30">
         <div className="grid grid-cols-[1fr_24px_1fr] px-3 py-3 border-b border-stone-800 bg-stone-900 text-[10px] uppercase tracking-[0.18em] text-stone-500">
           <div>Atual — rateio por cliente</div>
@@ -1088,6 +1211,8 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
           </div>
         </div>
       </div>
+
+      {analise && <PainelRiscos riscos={analise.riscos} horizonte={analise.horizonte} onClickCliente={onClickCliente} />}
 
       <div className="mt-6 border border-stone-800 p-4 bg-stone-900/20">
         <h4 className="text-[10px] uppercase tracking-[0.2em] text-stone-500 mb-3">Legenda</h4>

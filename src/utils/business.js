@@ -724,6 +724,7 @@ export function construirCenarioProposto(ug, planoGlobal) {
   return {
     ug,
     linhas,
+    distribuivel,
     metricas: {
       capacidade: cap,
       demandaAtual, demandaProposta,
@@ -738,4 +739,91 @@ export function construirCenarioProposto(ug, planoGlobal) {
       nSaindo: realocOut.length,
     },
   };
+}
+
+// Projeta saldo do cliente N meses à frente com o novo rateio aplicado.
+// saldo_em_n = max(0, saldo + n * (recebido - consumido))
+export function projetarSaldoEmNMeses(cliente, novoRateioPct, distribuivel, n = 6) {
+  const cmc = cliente.cmcEfetivo;
+  if (!cmc || !distribuivel || cliente.ehUCGeradora) return cliente.saldo || 0;
+  const recebe = (novoRateioPct / 100) * distribuivel;
+  return Math.max(0, (cliente.saldo || 0) + n * (recebe - cmc));
+}
+
+// Análise agregada do cenário: distribuição de status atual vs projetada em N meses,
+// pulmão coletivo da UG, e lista de riscos que permanecem após aplicar tudo.
+// Usa N=6 por padrão (intervalo típico de re-execução do otimizador).
+export function analisarCenario(cenario, n = 6) {
+  const { linhas, distribuivel, metricas } = cenario;
+
+  const bucketVazio = () => ({ critico: 0, baixo: 0, ideal: 0, alto: 0, excessivo: 0, geradora: 0, sem_dados: 0 });
+  const distAtual = bucketVazio();
+  const distProposta = bucketVazio();
+
+  linhas.forEach(l => {
+    // Atual exclui clientes que ainda não estão na UG (entrando).
+    if (l.estado !== "entrando") {
+      if (l.cliente.ehUCGeradora) distAtual.geradora++;
+      else distAtual[statusSaldo(l.cliente.saldo || 0, l.cmc).nivel]++;
+    }
+    // Proposto exclui clientes que vão sair, e projeta saldo dos demais em N meses.
+    if (l.estado !== "saindo") {
+      if (l.cliente.ehUCGeradora) distProposta.geradora++;
+      else {
+        const saldoProj = projetarSaldoEmNMeses(l.cliente, l.rateioProposto, distribuivel, n);
+        distProposta[statusSaldo(saldoProj, l.cmc).nivel]++;
+      }
+    }
+  });
+
+  // Pulmão coletivo: média ponderada (pelo CMC) de meses de saldo dos ajustáveis.
+  const pulmaoColetivo = (linhasAtivas, getSaldo) => {
+    let pesoCmc = 0, somaMesesPond = 0;
+    linhasAtivas.forEach(l => {
+      if (!l.cmc) return;
+      const meses = getSaldo(l) / l.cmc;
+      somaMesesPond += meses * l.cmc;
+      pesoCmc += l.cmc;
+    });
+    return pesoCmc > 0 ? somaMesesPond / pesoCmc : 0;
+  };
+  const ativosAtuais   = linhas.filter(l => !l.cliente.ehUCGeradora && l.estado !== "entrando");
+  const ativosPropostos = linhas.filter(l => !l.cliente.ehUCGeradora && l.estado !== "saindo");
+  const pulmaoAtual    = pulmaoColetivo(ativosAtuais,   l => l.cliente.saldo || 0);
+  const pulmaoProposto = pulmaoColetivo(ativosPropostos, l => projetarSaldoEmNMeses(l.cliente, l.rateioProposto, distribuivel, n));
+
+  // Riscos remanescentes
+  const riscos = [];
+
+  const car = metricas.carregamentoProposto;
+  if (car < OPT_PARAMS.FAIXA_ALVO_MIN) {
+    riscos.push({ tipo: "carregamento_baixo", severidade: "media",
+      mensagem: `Carregamento permanecerá em ${car.toFixed(0)}% (faixa-alvo: ${OPT_PARAMS.FAIXA_ALVO_MIN}–${OPT_PARAMS.FAIXA_ALVO_MAX}%) — UG segue subutilizada, capacidade ociosa.` });
+  } else if (car > OPT_PARAMS.FAIXA_ALVO_MAX) {
+    riscos.push({ tipo: "carregamento_alto", severidade: "alta",
+      mensagem: `Carregamento permanecerá em ${car.toFixed(0)}% (faixa-alvo: ${OPT_PARAMS.FAIXA_ALVO_MIN}–${OPT_PARAMS.FAIXA_ALVO_MAX}%) — UG segue sobrecarregada, clientes drenarão saldo.` });
+  }
+
+  const drift = metricas.somaProposta - 100;
+  if (Math.abs(drift) >= 5) {
+    riscos.push({ tipo: "soma_off", severidade: Math.abs(drift) >= 15 ? "alta" : "media",
+      mensagem: `Soma de rateio proposta em ${metricas.somaProposta.toFixed(0)}% (esperado 100%). ${drift > 0 ? "Excesso será aparado" : "Falta será preenchida"} em nova execução do otimizador.` });
+  }
+
+  linhas.forEach(l => {
+    if (l.cliente.ehUCGeradora || l.estado === "saindo") return;
+    if (!l.cmc) return;
+    const saldoProj = projetarSaldoEmNMeses(l.cliente, l.rateioProposto, distribuivel, n);
+    const razao = saldoProj / l.cmc;
+    const st = statusSaldo(saldoProj, l.cmc);
+    if (st.nivel === "critico") {
+      riscos.push({ tipo: "cliente_critico", severidade: "alta", cliente: l.cliente,
+        mensagem: `ainda em crítico em ${n}m (${razao.toFixed(2)}× CMC) — provável fatura cheia.` });
+    } else if (st.nivel === "excessivo") {
+      riscos.push({ tipo: "cliente_excessivo", severidade: "media", cliente: l.cliente,
+        mensagem: `continua em excessivo em ${n}m (${razao.toFixed(1)}× CMC) — risco de expirar créditos.` });
+    }
+  });
+
+  return { distAtual, distProposta, pulmaoAtual, pulmaoProposto, riscos, horizonte: n };
 }
