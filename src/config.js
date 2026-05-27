@@ -22,3 +22,23 @@ export const UC_GERADORA_NOVA = {
 
 export const UG_NOMES = Object.keys(TIPO_GD);
 export const RE_MES = /^\d{2}\/\d{4}$/;
+
+// ─── Dados fixos da Auri Energia (usados em documentos gerados) ───────
+export const DADOS_FIXOS_AURI = {
+  telefone: "(64) 99923-9622",
+  celular:  "(64) 99923-9622",
+  email:    "contato@aurienergia.com.br",
+};
+
+// ─── Classe da UC Geradora (a ser preenchida com info do usuário) ────
+// Chave = nome da UG (mesmo nome usado em TIPO_GD)
+// Ex: "B1 Residencial", "B3 Comercial", "A4 Industrial", etc.
+export const CLASSE_POR_UG = {
+  Piloto: "",
+  Alessandro: "",
+  Daniela: "",
+  Lana: "",
+  Taliton: "",
+  "Luz Transportes": "",
+  "Cercados e Telas": "",
+};

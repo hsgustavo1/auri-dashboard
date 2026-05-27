@@ -1,0 +1,410 @@
+/* ─── Overlay/modal de tela cheia ──────────────────────────────────── */
+.formulario-overlay {
+  position: fixed;
+  inset: 0;
+  background: #44403c;
+  z-index: 60;
+  overflow-y: auto;
+  padding: 24px 0;
+}
+
+.formulario-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  max-width: 220mm;
+  margin: 0 auto 16px;
+  padding: 10px 14px;
+  background: #1c1917;
+  border: 1px solid #44403c;
+  color: #fafaf9;
+  font-family: system-ui, sans-serif;
+}
+
+.formulario-toolbar .titulo {
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #a8a29e;
+}
+
+.formulario-toolbar .titulo strong {
+  color: #fafaf9;
+}
+
+.formulario-toolbar .acoes {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.formulario-toolbar .opt-assinatura {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #d6d3d1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.formulario-toolbar .opt-assinatura input {
+  accent-color: #f59e0b;
+}
+
+.formulario-toolbar button {
+  background: transparent;
+  border: 1px solid #57534e;
+  color: #d6d3d1;
+  padding: 7px 14px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.formulario-toolbar button.primario {
+  border-color: #f59e0b;
+  color: #fbbf24;
+}
+
+.formulario-toolbar button:hover {
+  background: rgba(245, 158, 11, 0.08);
+}
+
+.formulario-aviso {
+  max-width: 220mm;
+  margin: 0 auto 12px;
+  padding: 10px 14px;
+  background: #422006;
+  border: 1px solid #92400e;
+  color: #fcd34d;
+  font-size: 12px;
+  font-family: system-ui, sans-serif;
+}
+
+/* ─── A página (1:1 com o PDF da Equatorial) ───────────────────────── */
+.pagina-rateio {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto 18px;
+  padding: 15mm 18mm;
+  box-sizing: border-box;
+  background: #ffffff;
+  color: #000000;
+  font-family: "Cambria", "Times New Roman", "Georgia", serif;
+  font-size: 11pt;
+  line-height: 1.35;
+  position: relative;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+}
+
+.pagina-rateio .cabecalho {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 8mm;
+}
+
+.pagina-rateio .logo-equatorial {
+  width: 38mm;
+  height: auto;
+}
+
+.pagina-rateio h1.titulo-form {
+  text-align: center;
+  font-size: 17pt;
+  font-weight: 700;
+  margin: 0 0 8mm;
+}
+
+.pagina-rateio .secao h2 {
+  font-size: 11pt;
+  font-weight: 700;
+  margin: 0 0 3mm;
+}
+
+/* ─── Seção 1: identificação ─────────────────────────────────────── */
+.pagina-rateio .grid-titular {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 6mm;
+  row-gap: 2mm;
+  margin-bottom: 4mm;
+}
+
+.pagina-rateio .grid-titular .full {
+  grid-column: 1 / -1;
+}
+
+.pagina-rateio .campo {
+  display: flex;
+  align-items: baseline;
+  gap: 2mm;
+  border-bottom: 1px solid #000;
+  padding: 1mm 0;
+  min-height: 6mm;
+}
+
+.pagina-rateio .campo > .label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pagina-rateio .campo > .valor {
+  flex: 1;
+  outline: none;
+  min-height: 1em;
+}
+
+.pagina-rateio .campo > .valor:empty::before {
+  content: "\00a0";
+}
+
+/* ─── Caixinhas de Inclusão/Alteração/Exclusão + Tipo ───────────── */
+.pagina-rateio .caixinhas {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12mm;
+  margin: 4mm 0 6mm;
+}
+
+.pagina-rateio .caixinhas table {
+  border-collapse: collapse;
+  width: 60mm;
+}
+
+.pagina-rateio .caixinhas td {
+  border: 1px solid #000;
+  padding: 1mm 3mm;
+  font-size: 10pt;
+  height: 6mm;
+}
+
+.pagina-rateio .caixinhas td.celula-label {
+  width: 32mm;
+}
+
+.pagina-rateio .caixinhas td.celula-marca {
+  text-align: center;
+  font-family: monospace;
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pagina-rateio .caixinhas .titulo-grupo {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 1mm;
+  font-size: 10pt;
+}
+
+/* ─── Seção 2: lista de UCs ─────────────────────────────────────── */
+.pagina-rateio .secao-2 p.descricao {
+  font-size: 10.5pt;
+  margin: 0 0 4mm;
+}
+
+.pagina-rateio .secao-2 p.descricao .legal {
+  font-style: italic;
+  font-size: 9.5pt;
+}
+
+.pagina-rateio table.lista-ucs {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.pagina-rateio table.lista-ucs td {
+  border-bottom: 1px solid #000;
+  padding: 1mm 1mm;
+  font-size: 10pt;
+  height: 6mm;
+  vertical-align: bottom;
+}
+
+.pagina-rateio table.lista-ucs td .rotulo {
+  font-weight: 700;
+  margin-right: 1mm;
+}
+
+.pagina-rateio table.lista-ucs td .valor {
+  outline: none;
+  display: inline;
+}
+
+.pagina-rateio table.lista-ucs col.col-uc       { width: 35%; }
+.pagina-rateio table.lista-ucs col.col-cnpj     { width: 45%; }
+.pagina-rateio table.lista-ucs col.col-pct      { width: 20%; }
+
+.pagina-rateio table.lista-ucs td.col-pct {
+  text-align: right;
+  padding-right: 2mm;
+}
+
+.pagina-rateio table.lista-ucs td.col-pct .rotulo-colon {
+  font-weight: 700;
+  margin-right: 2mm;
+}
+
+.pagina-rateio table.lista-ucs td.col-pct .valor {
+  display: inline-block;
+  min-width: 12mm;
+  text-align: right;
+  margin-right: 1mm;
+}
+
+.pagina-rateio table.lista-ucs td.col-pct .unidade-pct {
+  font-weight: 400;
+}
+
+/* ─── Aviso importante ─────────────────────────────────────────── */
+.pagina-rateio .importante {
+  margin-top: 6mm;
+}
+
+.pagina-rateio .importante .hr-importante {
+  border: none;
+  border-top: 1.5px solid #000;
+  margin: 0 0 2mm;
+}
+
+.pagina-rateio .importante h3 {
+  text-align: center;
+  font-size: 11pt;
+  font-weight: 700;
+  margin: 0 0 2mm;
+}
+
+.pagina-rateio .importante ul {
+  margin: 0;
+  padding-left: 5mm;
+  font-size: 10pt;
+  list-style: disc outside;
+}
+
+.pagina-rateio .importante li {
+  margin-bottom: 3mm;
+  padding-left: 1mm;
+}
+
+/* ─── Assinatura ───────────────────────────────────────────────── */
+.pagina-rateio .assinatura {
+  margin-top: 12mm;
+  text-align: center;
+}
+
+.pagina-rateio .assinatura .linha-data {
+  text-align: center;
+  margin-bottom: 14mm;
+}
+
+.pagina-rateio .assinatura .linha-data .valor {
+  display: inline-block;
+  border-bottom: 1px solid #000;
+  min-width: 80mm;
+  outline: none;
+  padding: 0 4mm;
+}
+
+.pagina-rateio .assinatura .linha-assinatura {
+  display: inline-block;
+  width: 90mm;
+  border-top: 1px solid #000;
+  padding-top: 1mm;
+  font-weight: 700;
+  font-size: 10pt;
+}
+
+.pagina-rateio .footer-site {
+  position: absolute;
+  bottom: 10mm;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 9pt;
+  color: #000;
+}
+
+.pagina-rateio .numero-pagina {
+  position: absolute;
+  bottom: 10mm;
+  right: 18mm;
+  font-size: 9pt;
+  color: #555;
+}
+
+/* Realce visual de "editável" só em tela (some no print) */
+[contenteditable="true"]:hover {
+  background: #fef3c7;
+}
+
+[contenteditable="true"]:focus {
+  background: #fef9c3;
+}
+
+/* ─── Logo "equatorial energia" inline (placeholder estilizado) ──── */
+.logo-equatorial-svg {
+  width: 38mm;
+  height: 10mm;
+  display: block;
+}
+
+/* ─── PRINT ───────────────────────────────────────────────────── */
+@page {
+  size: A4 portrait;
+  margin: 0;
+}
+
+@media print {
+  /* esconde TUDO do app por padrão */
+  body * { visibility: hidden !important; }
+
+  /* mostra só o overlay e seus descendentes */
+  .formulario-overlay,
+  .formulario-overlay * { visibility: visible !important; }
+
+  /* limpa o overlay para impressão limpa */
+  .formulario-overlay {
+    position: static;
+    background: #ffffff;
+    padding: 0;
+    overflow: visible;
+  }
+
+  /* esconde a toolbar e avisos */
+  .formulario-toolbar,
+  .formulario-aviso { display: none !important; }
+
+  /* cada página numa folha */
+  .pagina-rateio {
+    margin: 0;
+    box-shadow: none;
+    page-break-after: always;
+    width: 210mm;
+    min-height: 297mm;
+  }
+
+  .pagina-rateio:last-child {
+    page-break-after: auto;
+  }
+
+  /* remove os realces de edição */
+  [contenteditable="true"] {
+    background: transparent !important;
+  }
+
+  /* esconde borda padrão dos checkboxes (estamos usando texto) */
+  .pagina-rateio .caixinhas td.celula-marca {
+    cursor: default;
+  }
+}

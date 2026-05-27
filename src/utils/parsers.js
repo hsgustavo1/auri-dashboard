@@ -90,6 +90,17 @@ export function parseInfoGerais(text) {
   return ugs;
 }
 
+// Lê o primeiro campo não-vazio do CSV, tolerando variações de nome de coluna
+// (acentos, caixa, hífen vs. espaço). Útil porque a aba Clientes pode ter
+// "Endereço" ou "endereco" dependendo de quem editou a planilha.
+function pickField(row, ...candidates) {
+  for (const k of candidates) {
+    const v = row[k];
+    if (v != null && String(v).trim() !== "") return String(v).trim();
+  }
+  return "";
+}
+
 export function parseClientes(text) {
   const rows = parseCSV(text);
   return rows
@@ -106,6 +117,11 @@ export function parseClientes(text) {
         desconto_pct: desconto,
         emite_cobranca: (r["Emitir Cobrança?"] || "").toUpperCase().includes("SIM"),
         cpf_cnpj: (r["CPF/CNPJ"] || "").trim(),
+        endereco: pickField(r, "Endereço", "Endereco", "endereco", "endereço"),
+        cep:      pickField(r, "CEP", "Cep", "cep"),
+        bairro:   pickField(r, "Bairro", "bairro"),
+        cidade:   pickField(r, "Cidade", "cidade", "Município", "Municipio"),
+        classe:   pickField(r, "Classe", "classe"),
         inativo,
       };
     })

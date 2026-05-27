@@ -1,9 +1,10 @@
 import { useState, useMemo } from "react";
-import { RefreshCw } from "lucide-react";
+import { RefreshCw, FileText } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
 import { construirCenarioProposto, analisarCenario } from "./utils/business";
 import { UG_NOMES } from "./config";
+import FormularioRateio from "./components/FormularioRateio";
 
 // ─── UI Atoms ────────────────────────────────────────────────
 function NavBtn({ ativo, onClick, children }) {
@@ -1075,7 +1076,7 @@ function PainelRiscos({ riscos, horizonte, onClickCliente }) {
   );
 }
 
-function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
+function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, onAbrirFormulario }) {
   const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
   const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
 
@@ -1124,17 +1125,27 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
             Projeta o estado da UG após aplicar <strong className="text-stone-300">todas</strong> as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs).
           </p>
         </div>
-        <div>
-          <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
-          <select
-            value={ugNome}
-            onChange={e => setUgNome(e.target.value)}
-            className="bg-stone-900 border border-stone-700 px-4 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60 min-w-[200px]"
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
+            <select
+              value={ugNome}
+              onChange={e => setUgNome(e.target.value)}
+              className="bg-stone-900 border border-stone-700 px-4 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60 min-w-[200px]"
+            >
+              {ugsValidadas.map(u => (
+                <option key={u.nome} value={u.nome}>{u.nome} · {u.tipo}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => onAbrirFormulario({ ug, cenario })}
+            className="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-[0.18em] border border-amber-500/60 text-amber-300 hover:bg-amber-500/10 transition-colors"
+            title="Gera o formulário oficial da Equatorial com o rateio proposto pré-preenchido"
           >
-            {ugsValidadas.map(u => (
-              <option key={u.nome} value={u.nome}>{u.nome} · {u.tipo}</option>
-            ))}
-          </select>
+            <FileText size={14} />
+            Gerar Formulário Equatorial
+          </button>
         </div>
       </div>
 
@@ -1262,6 +1273,7 @@ export default function App() {
   const [aba, setAba] = useState("overview");
   const [ugSel, setUgSel] = useState(null);
   const [clienteSel, setClienteSel] = useState(null);
+  const [formularioRateio, setFormularioRateio] = useState(null); // { ug, cenario }
 
   const { clientes, ugsValidadas, planoGlobal } = data || {
     clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} },
@@ -1390,7 +1402,13 @@ export default function App() {
         )}
 
         {aba === "comparativo" && (
-          <TelaComparativo ugsValidadas={ugsValidadas} planoGlobal={planoGlobal} onClickCliente={setClienteSel} />
+          <TelaComparativo
+            ugsValidadas={ugsValidadas}
+            planoGlobal={planoGlobal}
+            clientes={clientes}
+            onClickCliente={setClienteSel}
+            onAbrirFormulario={setFormularioRateio}
+          />
         )}
 
         {aba === "clientes" && (
@@ -1412,6 +1430,15 @@ export default function App() {
       </footer>
 
       {clienteSel && <DetalheCliente cliente={clienteSel} onClose={() => setClienteSel(null)} />}
+
+      {formularioRateio && (
+        <FormularioRateio
+          ug={formularioRateio.ug}
+          cenario={formularioRateio.cenario}
+          clientes={clientes}
+          onClose={() => setFormularioRateio(null)}
+        />
+      )}
     </div>
   );
 }
