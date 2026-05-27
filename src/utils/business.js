@@ -620,6 +620,34 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
   };
 }
 
+// Projeta quanto tempo a nova alocação % sobrevive até virar problema:
+//   - "ja_critico" / "ja_excessivo": já está fora da faixa hoje
+//   - "ate_critico": saldo drenando → meses até razão < 0.5× CMC
+//   - "ate_excessivo": saldo acumulando → meses até razão > 6× CMC
+//   - "estavel": net mensal < 5% do CMC → sem problema previsto
+// Retorna null quando não dá para computar (CMC=0, sem distribuivel, geradora).
+export function projetarHorizonte(cliente, novoRateioPct, distribuivel) {
+  const cmc = cliente.cmcEfetivo;
+  if (!cmc || cmc <= 0 || !distribuivel || cliente.ehUCGeradora) return null;
+
+  const saldo = cliente.saldo || 0;
+  const recebeMensal = (novoRateioPct / 100) * distribuivel;
+  const netMensal = recebeMensal - cmc;
+  const SALDO_CRITICO   = 0.5 * cmc;
+  const SALDO_EXCESSIVO = 6   * cmc;
+
+  if (saldo < SALDO_CRITICO)   return { tipo: "ja_critico",   meses: 0 };
+  if (saldo > SALDO_EXCESSIVO) return { tipo: "ja_excessivo", meses: 0 };
+
+  if (Math.abs(netMensal) < cmc * 0.05) {
+    return { tipo: "estavel", meses: Infinity };
+  }
+  if (netMensal < 0) {
+    return { tipo: "ate_critico", meses: (saldo - SALDO_CRITICO) / (-netMensal) };
+  }
+  return { tipo: "ate_excessivo", meses: (SALDO_EXCESSIVO - saldo) / netMensal };
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Cenário Proposto — aplica todas as recomendações do planoGlobal a uma UG
 // e devolve o snapshot projetado (linhas + métricas agregadas).
@@ -676,6 +704,14 @@ export function construirCenarioProposto(ug, planoGlobal) {
   });
 
   // Atual = só clientes que JÁ estão na UG (exclui entrantes); Proposto = exclui só os que saem.
+  // Enriquece cada linha com métricas de saúde do cliente e projeção do novo rateio.
+  // Para "saindo", a projeção do destino não é conhecida — fica null e a UI mostra "→ destino".
+  linhas.forEach(l => {
+    l.cmc = l.cliente.cmcEfetivo || 0;
+    l.pulmaoAtualMeses = l.cmc > 0 ? (l.cliente.saldo || 0) / l.cmc : null;
+    l.projecao = (l.estado === "saindo") ? null : projetarHorizonte(l.cliente, l.rateioProposto, distribuivel);
+  });
+
   const ativosAtuais   = linhas.filter(l => !l.cliente.ehUCGeradora && l.estado !== "entrando");
   const ativosPropostos = linhas.filter(l => !l.cliente.ehUCGeradora && l.estado !== "saindo");
 

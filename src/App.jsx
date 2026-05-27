@@ -794,8 +794,33 @@ function BarraComparativa({ pct, maxPct, cor, fantasma }) {
   );
 }
 
+// Formata a projeção de horizonte (output de projetarHorizonte) em texto + cor.
+function formatarProjecao(proj) {
+  if (!proj) return null;
+  if (proj.tipo === "estavel") return { label: "estável (sem problema previsto)", cor: "#10b981" };
+  if (proj.tipo === "ja_critico")   return { label: "já em crítico hoje",   cor: "#dc2626" };
+  if (proj.tipo === "ja_excessivo") return { label: "já em excessivo hoje", cor: "#7c3aed" };
+  const m = proj.meses;
+  const mStr = m < 1 ? "<1m" : m < 10 ? `${m.toFixed(1)}m` : `${Math.round(m)}m`;
+  const destino = proj.tipo === "ate_critico" ? "crítico" : "excessivo";
+  const cor = m < 6 ? "#dc2626"
+            : m < 12 ? "#f59e0b"
+            : m < 24 ? "#3b82f6"
+            : "#10b981";
+  return { label: `~${mStr} até ${destino}`, cor };
+}
+
+function formatarPulmao(meses) {
+  if (meses == null) return null;
+  if (meses < 0.5) return { label: `${meses.toFixed(1)}m pulmão`, cor: "#dc2626" };
+  if (meses < 1.5) return { label: `${meses.toFixed(1)}m pulmão`, cor: "#f59e0b" };
+  if (meses <= 3)  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#10b981" };
+  if (meses <= 6)  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#3b82f6" };
+  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#7c3aed" };
+}
+
 function LinhaComparativa({ linha, maxPct, onClickCliente }) {
-  const { cliente, rateioAtual, rateioProposto, estado, origem, destino, origemMudanca } = linha;
+  const { cliente, rateioAtual, rateioProposto, estado, origem, destino, origemMudanca, cmc, pulmaoAtualMeses, projecao } = linha;
   const delta = rateioProposto - rateioAtual;
   const ehGeradora = cliente.ehUCGeradora;
 
@@ -818,20 +843,40 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
     : estado === "entrando" ? "#10b981"
     : corBarraAtual;
 
+  const pulmaoFmt = !ehGeradora ? formatarPulmao(pulmaoAtualMeses) : null;
+  const projFmt = formatarProjecao(projecao);
+
   return (
-    <div className="grid grid-cols-[1fr_24px_1fr] gap-3 items-center py-2 px-2 hover:bg-stone-800/30 transition-colors border-b border-stone-800/40">
+    <div className="grid grid-cols-[1fr_24px_1fr] gap-3 items-center py-2.5 px-2 hover:bg-stone-800/30 transition-colors border-b border-stone-800/40">
       {/* lado ATUAL */}
       <div className="min-w-0">
         <div className="flex items-center gap-2 mb-1">
           {ehGeradora && <span className="text-[9px] px-1 py-px bg-amber-900/40 text-amber-300 border border-amber-700 uppercase">ger.</span>}
           <button onClick={() => onClickCliente(cliente)} className="text-xs text-stone-300 hover:text-amber-300 truncate text-left">{cliente.nome}</button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-1">
           <div className="flex-1">
             <BarraComparativa pct={rateioAtual} maxPct={maxPct} cor={corBarraAtual} fantasma={estado === "entrando"} />
           </div>
           <span className="font-mono text-xs text-stone-400 w-10 text-right">{rateioAtual}%</span>
         </div>
+        {/* Metadados do cliente: CMC + pulmão atual */}
+        {!ehGeradora && (
+          <div className="flex items-center gap-2 text-[10px] font-mono pl-px">
+            <span className="text-stone-500">CMC <span className="text-stone-300">{cmc.toFixed(0)}</span></span>
+            {pulmaoFmt && (
+              <>
+                <span className="text-stone-700">·</span>
+                <span style={{ color: pulmaoFmt.cor }}>{pulmaoFmt.label}</span>
+              </>
+            )}
+          </div>
+        )}
+        {ehGeradora && (
+          <div className="text-[10px] font-mono text-stone-500 pl-px">
+            autoconsumo {cmc.toFixed(0)} kWh/mês
+          </div>
+        )}
       </div>
 
       {/* centro: ícone de estado */}
@@ -852,11 +897,23 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
             )}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mb-1">
           <div className="flex-1">
             <BarraComparativa pct={rateioProposto} maxPct={maxPct} cor={corBarraProposta} fantasma={estado === "saindo"} />
           </div>
           <span className="font-mono text-xs w-10 text-right" style={{ color: corEstado }}>{rateioProposto}%</span>
+        </div>
+        {/* Projeção: quanto tempo a nova % aguenta */}
+        <div className="text-[10px] font-mono pl-px">
+          {estado === "saindo" ? (
+            <span className="text-stone-500">projeção será recalculada em <span className="text-stone-300">{destino}</span></span>
+          ) : ehGeradora ? (
+            <span className="text-stone-500">—</span>
+          ) : projFmt ? (
+            <span style={{ color: projFmt.cor }}>{projFmt.label}</span>
+          ) : (
+            <span className="text-stone-600">sem CMC para projetar</span>
+          )}
         </div>
       </div>
     </div>
@@ -1055,6 +1112,17 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente }) {
         <p className="text-[11px] text-stone-500 mt-3 leading-relaxed">
           % de entrantes via realocação é calculado proporcional ao CMC sobre o distribuível da UG destino (mesma lógica das órfãs). Barras tracejadas indicam ausência do cliente naquele lado da comparação.
         </p>
+        <div className="mt-3 pt-3 border-t border-stone-800 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-stone-500 leading-relaxed">
+          <div>
+            <strong className="text-stone-300">CMC</strong>: consumo médio mensal (kWh) do cliente — média ponderada dos últimos 12 meses.
+          </div>
+          <div>
+            <strong className="text-stone-300">Pulmão</strong>: saldo atual ÷ CMC = quantos meses o cliente sobreviveria sem receber novos créditos.
+          </div>
+          <div className="md:col-span-2">
+            <strong className="text-stone-300">Projeção</strong>: com a nova alocação %, em quantos meses o saldo do cliente chega ao limiar de problema — crítico (&lt; 0,5× CMC, paga fatura cheia) ou excessivo (&gt; 6× CMC, risco de expirar em 60 meses). <em className="text-stone-400">"Estável"</em> = recebimento e consumo equilibrados.
+          </div>
+        </div>
       </div>
     </div>
   );
