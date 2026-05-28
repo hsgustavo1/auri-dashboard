@@ -159,9 +159,9 @@ function DiagramaRow({ cliente, maxPct, onClick, ehGeradora }) {
         <div className="font-mono text-stone-600">{cliente.rateio_pct}%</div>
         <div className="text-[10px] text-stone-500">
           saldo: <span className="font-mono">{(cliente.saldo||0).toFixed(0)}</span> · cmc: <span className="font-mono">{(cliente.cmc||0).toFixed(0)}</span>
-          {(cliente.cmc||0) > 0 && (
+          {cliente.pulmaoMeses != null && (
             <span className="ml-1.5 font-mono" style={{ color: cliente.status.cor }}>
-              = {(cliente.saldo / cliente.cmc).toFixed(1)} meses
+              = {cliente.pulmaoMeses.toFixed(1)} meses
             </span>
           )}
         </div>

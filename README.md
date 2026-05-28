@@ -24,11 +24,12 @@ Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terr
 | **UC** (Unidade Consumidora) | Unidade que recebe créditos via rateio. |
 | **GD1 vs GD2** | GD1: a geradora participa do rateio e seu saldo é fluido. GD2: a geradora autoconsome antes do rateio e seu saldo fica **travado** por regulação. |
 | **Rateio %** | Percentual da geração da UG alocado para cada UC. Deve somar exatamente 100% por UG. |
-| **CMC / cmcEfetivo** | Consumo médio (12m, últimos 6 com peso dobrado). `cmcEfetivo = cmc || media_consumo`. |
+| **CMC / cmcEfetivo** | Consumo médio (12m, últimos 6 com peso dobrado). `cmcEfetivo = cmc || media_consumo`. Usado em **carregamento e otimizador**. |
+| **cmcBaseline** | CMC de **regime ativo**, robusto (winsorização mediana±k·MAD + âncora P75). Usado em **pulmão e status** — ver abaixo. |
 | **colchaoIdeal** | `2 × cmcEfetivo` — saldo-alvo de longo prazo. |
 | **Saldo** | Créditos acumulados não consumidos (kWh). |
 | **Carregamento** | Quanto da geração distribuível está comprometida. **Type-aware** (ver abaixo). Faixa-alvo: 95–105%. |
-| **Pulmão** | `saldo / cmcEfetivo` — meses de reserva. |
+| **Pulmão** | `saldo / cmcBaseline` — meses de reserva (sobre o consumo *normal*, não o deprimido). |
 
 ### Carregamento (definição type-aware) — `carregamentoUG`
 
@@ -39,6 +40,17 @@ O objetivo central do otimizador é **carregamento ≈ 100%** (casar geração�
 - **Regra do "servido":** um beneficiário só conta se tem **rateio > 0**. Um cliente a 0% não é servido por aquela UG (UC sem UG efetiva) — não entra no carregamento.
 
 Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG Detalhe, Otimizador, Comparativo, Simulador), eliminando divergências entre telas.
+
+### CMC: efetivo vs. baseline (regime ativo)
+
+Há **dois** números de consumo médio, para fins distintos:
+
+- **`cmcEfetivo`** (`calcularCMC`, fórmula original `0,6 × recente ponderado + 0,4 × média`) → usado em **carregamento e decisões do otimizador**.
+- **`cmcBaseline`** (`cmcBaseline`) → **robusto**: winsoriza cada mês para `mediana ± k·MAD` (apara picos altos e quedas pontuais) e ancora os "meses ativos" no **P75** (um trecho parado longo não puxa a referência para baixo). Usado em **pulmão e status de saldo**.
+
+Motivo: um cliente cujo consumo **caiu** (ex.: Gelso) tem o `cmcEfetivo` deprimido → `saldo/cmcEfetivo` daria um pulmão **falsamente alto** (créditos que parecem durar 15 meses mas, quando o consumo voltar, drenam rápido). O `cmcBaseline` reflete o consumo *normal* do cliente, então o pulmão/status ficam realistas. Parâmetros em `CMC_PARAMS`.
+
+Campos auxiliares: `cmcRecente` (média dos últimos N meses, com zeros) e `emRecuperacao` (`cmcRecente < PARADO_FRAC × cmcBaseline`) — base da sinalização **"parado"** (ver Estágio 4).
 
 ### Status de saldo
 
@@ -218,7 +230,7 @@ git commit → git push origin main → Vercel webhook → build → deploy (~30
 
 ## Mapeado para evolução futura
 
-- **Metodologia do CMC com histórico poluído:** quando uma UC fica muitos meses com consumo baixo/zero, a média subestima o consumo real e infla o pulmão falsamente. Rever o cálculo (ex.: ponderar por recência/atividade) para não superestimar a reserva de clientes "parados".
+- **Robustez a outliers no carregamento:** hoje a winsorização está só no `cmcBaseline` (pulmão/status). O `cmcEfetivo` (carregamento/otimizador) usa a fórmula original, sem aparar outliers — feito de propósito para não re-deslocar o otimizador calibrado. Aplicar robustez também no carregamento exigiria re-calibrar os limiares do otimizador.
 - Planejamento multi-período (estado-alvo em N meses).
 - Persistência de estado (localStorage) e histórico de ajustes aplicados.
 - Contexto financeiro (receita/custo por UG).

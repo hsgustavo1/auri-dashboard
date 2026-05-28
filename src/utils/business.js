@@ -12,6 +12,52 @@ export const OPT_PARAMS = {
   MIN_DELTA_INCREMENTAL: 1,    // movimento mínimo (pp) quando há gap acima da dead-zone
 };
 
+// ─── Parâmetros do cálculo de CMC (robustez + baseline) ────────────
+export const CMC_PARAMS = {
+  WINSOR_K: 3,            // winsoriza cada mês para mediana ± k·MAD (apara outliers)
+  BASELINE_ANCHOR_PCT: 75, // âncora do "regime ativo" (percentil) p/ o baseline
+  ACTIVE_FRAC: 0.4,       // mês conta no baseline se ≥ ACTIVE_FRAC × P75
+  RECENTE_N: 6,           // janela de "consumo recente" (atividade atual)
+  PARADO_FRAC: 0.3,       // recente < PARADO_FRAC × baseline ⇒ em recuperação/parado
+};
+
+// ── Helpers estatísticos robustos ──────────────────────────────────
+function mediana(v) {
+  if (!v.length) return 0;
+  const s = [...v].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function percentil(v, p) {
+  if (!v.length) return 0;
+  const s = [...v].sort((a, b) => a - b);
+  const idx = Math.min(s.length - 1, Math.max(0, Math.round((p / 100) * (s.length - 1))));
+  return s[idx];
+}
+// Winsoriza (clampa) cada valor à faixa mediana ± k·MAD. Apara picos altos e
+// quedas pontuais sem descartar dados. Se MAD=0 (valores ~iguais), não clampa.
+function winsorizar(v, k = CMC_PARAMS.WINSOR_K) {
+  if (!v.length) return v;
+  const med = mediana(v);
+  const mad = mediana(v.map(x => Math.abs(x - med)));
+  if (mad <= 0) return v.slice();
+  const lo = med - k * mad, hi = med + k * mad;
+  return v.map(x => Math.min(Math.max(x, lo), hi));
+}
+// Mistura recência sobre uma série (ordem cronológica): 0,6 × média ponderada
+// dos últimos 6 (peso linear 1..n) + 0,4 × média geral.
+function blendRecencia(serie) {
+  if (!serie.length) return 0;
+  const media = serie.reduce((a, b) => a + b, 0) / serie.length;
+  const ult = serie.slice(-6);
+  let sp = 0, sw = 0;
+  ult.forEach((x, i) => { sp += x * (i + 1); sw += (i + 1); });
+  return (sp / sw) * 0.6 + media * 0.4;
+}
+
+// CMC efetivo (usado em carregamento/otimizador): fórmula ORIGINAL, sem
+// winsorização — preserva o carregamento/otimizador calibrados byte-a-byte.
+// A robustez a outliers fica restrita ao cmcBaseline (pulmão/status).
 export function calcularCMC(arr) {
   const v = arr.filter(x => x !== null && x !== undefined && x > 0);
   if (!v.length) return 0;
@@ -21,6 +67,26 @@ export function calcularCMC(arr) {
   let sp = 0, sw = 0;
   ult6.forEach((x, i) => { sp += x * (i + 1); sw += (i + 1); });
   return (sp / sw) * 0.6 + med12 * 0.4;
+}
+
+// CMC de REGIME ATIVO: representa "quanto o cliente consome quando ativo".
+// Ancora no P75 (não na mediana) p/ um trecho parado longo não puxar a
+// referência para baixo. Usado em pulmão/status (não em carregamento/otimizador).
+export function cmcBaseline(arr) {
+  const pos = arr.filter(x => x !== null && x !== undefined && x > 0);
+  if (!pos.length) return 0;
+  const anchor = percentil(pos, CMC_PARAMS.BASELINE_ANCHOR_PCT);
+  const ativos = pos.filter(x => x >= CMC_PARAMS.ACTIVE_FRAC * anchor);
+  if (!ativos.length) return calcularCMC(arr);
+  return blendRecencia(winsorizar(ativos));
+}
+
+// Consumo recente (atividade atual): média dos últimos N meses, COM zeros
+// (mês sem consumo conta como 0). Reflete se o cliente está consumindo agora.
+export function cmcRecente(arr, n = CMC_PARAMS.RECENTE_N) {
+  const ult = arr.slice(-n).map(x => (x === null || x === undefined) ? null : x).filter(x => x !== null);
+  if (!ult.length) return 0;
+  return ult.reduce((a, b) => a + b, 0) / ult.length;
 }
 
 function saldoAtualFn(hist) {
@@ -68,8 +134,15 @@ export function buildClientes(scData, fatData, clientesBase) {
 
     const mediaConsumo = sc.media_consumo || 0;
     // cmcEfetivo: usa CMC histórico se disponível; fallback para media_consumo (S_C_Analitico col F).
-    // Sinal de demanda principal para o otimizador (resolve Input 7 — cliente novo).
+    // Sinal de demanda principal para o otimizador/carregamento (resolve Input 7 — cliente novo).
     const cmcEfetivo = cmc > 0 ? cmc : mediaConsumo;
+
+    // Baseline de REGIME ATIVO + atividade recente — usados em pulmão/status
+    // (não no carregamento/otimizador). Evita pulmão falso de clientes parados.
+    const baseFonte = consumoArr.some(v => v !== null) ? consumoArr : Object.values(fat).map(f => f.consumo);
+    const cmcBase = cmcBaseline(baseFonte) || cmcEfetivo;
+    const cmcRec = cmcRecente(baseFonte);
+    const emRecuperacao = cmcBase > 0 && cmcRec < CMC_PARAMS.PARADO_FRAC * cmcBase;
 
     const saldo = saldoAtualFn(saldoHist) || Object.values(fat).slice(-1)[0]?.saldo || 0;
     const travado = saldoTravadoFn(saldoHist);
@@ -78,12 +151,15 @@ export function buildClientes(scData, fatData, clientesBase) {
     const tipoGd = (base.geradora || sc.ug) ? TIPO_GD[base.geradora || sc.ug] : null;
     const ug = base.geradora || sc.ug || null;
 
+    // Pulmão e status de saldo usam o BASELINE (regime ativo), não o cmcEfetivo —
+    // assim um cliente "parado" não aparece com pulmão/saúde falsamente inflados.
     let status;
     if (ehUCGeradora) {
-      status = { nivel: "geradora", label: "UC Geradora", cor: "#a8a29e", razao: cmcEfetivo > 0 ? saldo / cmcEfetivo : 0 };
+      status = { nivel: "geradora", label: "UC Geradora", cor: "#a8a29e", razao: cmcBase > 0 ? saldo / cmcBase : 0 };
     } else {
-      status = statusSaldo(saldo, cmcEfetivo);
+      status = statusSaldo(saldo, cmcBase);
     }
+    const pulmaoMeses = cmcBase > 0 ? saldo / cmcBase : null;
 
     return {
       uc: base.uc,
@@ -101,6 +177,10 @@ export function buildClientes(scData, fatData, clientesBase) {
       rateio_pct: sc.rateio_pct !== undefined ? sc.rateio_pct : 0,
       cmc,
       cmcEfetivo,
+      cmcBaseline: cmcBase,
+      cmcRecente: cmcRec,
+      emRecuperacao,
+      pulmaoMeses,
       media_consumo: mediaConsumo,
       saldo, saldoArr, consumoArr, meses, status, travado, ehUCGeradora,
       travamentoSuspeito: travado && !ehUCGeradora && saldo > OPT_PARAMS.SALDO_TRAVADO_MIN,
@@ -206,12 +286,15 @@ function diagnosticarUG(ug) {
 function pulmaoColetivoUG(d) {
   const elegiveis = d.ajustaveis.filter(c => c.cmcEfetivo > 0);
   if (!elegiveis.length) return 0;
-  // Ponderar pelo CMC: clientes maiores pesam mais na tolerância da UG.
+  // Pulmão usa o BASELINE (regime ativo), não o cmcEfetivo — evita pulmão falso
+  // de clientes parados. Pondera pelo baseline (consumidores maiores pesam mais).
   let pesoCmc = 0, somaMesesPonderada = 0;
   elegiveis.forEach(c => {
-    const meses = c.saldo / c.cmcEfetivo; // razão saldo/CMC = meses de pulmão
-    somaMesesPonderada += meses * c.cmcEfetivo;
-    pesoCmc += c.cmcEfetivo;
+    const base = c.cmcBaseline || c.cmcEfetivo;
+    if (!base) return;
+    const meses = c.saldo / base; // razão saldo/baseline = meses de pulmão real
+    somaMesesPonderada += meses * base;
+    pesoCmc += base;
   });
   return pesoCmc > 0 ? somaMesesPonderada / pesoCmc : 0;
 }
@@ -577,7 +660,8 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
   fonteSinal.forEach(c => {
     const cat = classificarUC(c);
     if (cat === "fixa-travada" && c.saldo > OPT_PARAMS.SALDO_TRAVADO_MIN) {
-      const meses = c.cmcEfetivo > 0 ? (c.saldo / c.cmcEfetivo) : null;
+      const base = c.cmcBaseline || c.cmcEfetivo;
+      const meses = base > 0 ? (c.saldo / base) : null;
       if (c.ehUCGeradora && c.tipoGd === "GD2") {
         // Travado ESTRUTURAL (regulação) — sem volta.
         sinalizar.push({
@@ -592,9 +676,9 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
         sinalizar.push({
           tipo: "parado", cliente: c, ug_nome: c.ug, motivo: "consumo_baixo_recuperavel",
           titulo: `${c.nome}: parado (sem rateio)`,
-          descricao: `Consumo muito baixo e saldo de ${c.saldo.toFixed(0)} kWh recuperável` +
-            (meses ? ` (~${meses.toFixed(0)}m ao CMC atual)` : "") +
-            ` — drena quando o consumo voltar, diferente do travado estrutural de geradora. Está a 0% de rateio (UC sem UG efetiva): não conta no carregamento e não deve ser alocado até haver consumo que justifique.`,
+          descricao: `Consumo recente ~${(c.cmcRecente || 0).toFixed(0)} kWh/mês vs. normal ~${(c.cmcBaseline || 0).toFixed(0)} kWh/mês (regime ativo). ` +
+            `Saldo de ${c.saldo.toFixed(0)} kWh recuperável` + (meses ? ` (~${meses.toFixed(0)}m de pulmão sobre o consumo normal)` : "") +
+            ` — drena quando o consumo voltar, diferente do travado estrutural de geradora. A 0% de rateio é UC sem UG efetiva: não conta no carregamento e não deve ser alocado até voltar a consumir.`,
         });
       } else {
         // Travado mas SERVIDO (rateio > 0): conta no carregamento; saldo recuperável.
@@ -736,8 +820,9 @@ export function construirCenarioProposto(ug, planoGlobal) {
   // Atual = só clientes que JÁ estão na UG (exclui entrantes); Proposto = exclui só os que saem.
   // Enriquece cada linha com métricas de saúde do cliente.
   linhas.forEach(l => {
-    l.cmc = l.cliente.cmcEfetivo || 0;
-    l.pulmaoAtualMeses = l.cmc > 0 ? (l.cliente.saldo || 0) / l.cmc : null;
+    l.cmc = l.cliente.cmcEfetivo || 0;          // CMC efetivo (demanda) — p/ exibição
+    l.cmcBase = l.cliente.cmcBaseline || l.cmc;  // baseline regime ativo — p/ pulmão/status
+    l.pulmaoAtualMeses = l.cmcBase > 0 ? (l.cliente.saldo || 0) / l.cmcBase : null;
   });
 
   // Renormaliza, recalcula estado e projeção, retorna cenário completo.
@@ -1048,30 +1133,35 @@ export function analisarCenario(cenario, n = 6) {
   const distAtual = bucketVazio();
   const distProposta = bucketVazio();
 
+  // Classificação de saúde usa o BASELINE (regime ativo); a projeção do saldo
+  // (projetarSaldoEmNMeses) continua no consumo efetivo.
+  const baseDe = l => l.cmcBase || l.cliente.cmcBaseline || l.cmc;
+
   linhas.forEach(l => {
     // Atual exclui clientes que ainda não estão na UG (entrando).
     if (l.estado !== "entrando") {
       if (l.cliente.ehUCGeradora) distAtual.geradora++;
-      else distAtual[statusSaldo(l.cliente.saldo || 0, l.cmc).nivel]++;
+      else distAtual[statusSaldo(l.cliente.saldo || 0, baseDe(l)).nivel]++;
     }
     // Proposto exclui clientes que vão sair, e projeta saldo dos demais em N meses.
     if (l.estado !== "saindo") {
       if (l.cliente.ehUCGeradora) distProposta.geradora++;
       else {
         const saldoProj = projetarSaldoEmNMeses(l.cliente, l.rateioProposto, distribuivel, n);
-        distProposta[statusSaldo(saldoProj, l.cmc).nivel]++;
+        distProposta[statusSaldo(saldoProj, baseDe(l)).nivel]++;
       }
     }
   });
 
-  // Pulmão coletivo: média ponderada (pelo CMC) de meses de saldo dos ajustáveis.
+  // Pulmão coletivo: média ponderada (pelo baseline) de meses de saldo dos ajustáveis.
   const pulmaoColetivo = (linhasAtivas, getSaldo) => {
     let pesoCmc = 0, somaMesesPond = 0;
     linhasAtivas.forEach(l => {
-      if (!l.cmc) return;
-      const meses = getSaldo(l) / l.cmc;
-      somaMesesPond += meses * l.cmc;
-      pesoCmc += l.cmc;
+      const base = baseDe(l);
+      if (!base) return;
+      const meses = getSaldo(l) / base;
+      somaMesesPond += meses * base;
+      pesoCmc += base;
     });
     return pesoCmc > 0 ? somaMesesPond / pesoCmc : 0;
   };
@@ -1102,10 +1192,11 @@ export function analisarCenario(cenario, n = 6) {
 
   linhas.forEach(l => {
     if (l.cliente.ehUCGeradora || l.estado === "saindo") return;
-    if (!l.cmc) return;
+    const base = baseDe(l);
+    if (!base) return;
     const saldoProj = projetarSaldoEmNMeses(l.cliente, l.rateioProposto, distribuivel, n);
-    const razao = saldoProj / l.cmc;
-    const st = statusSaldo(saldoProj, l.cmc);
+    const razao = saldoProj / base;
+    const st = statusSaldo(saldoProj, base);
     if (st.nivel === "critico") {
       riscos.push({ tipo: "cliente_critico", severidade: "alta", cliente: l.cliente,
         mensagem: `ainda em crítico em ${n}m (${razao.toFixed(2)}× CMC) — provável fatura cheia.` });
