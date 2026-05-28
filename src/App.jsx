@@ -1,8 +1,18 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { RefreshCw, FileText } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from "recharts";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
-import { construirCenarioProposto, analisarCenario } from "./utils/business";
+import {
+  construirCenarioProposto,
+  construirCenarioComOverrides,
+  simularCenario,
+  analisarCenario,
+  distribuivelDaUG,
+  rateioPropostoDoCliente,
+  carregamentoUG,
+  capacidadeEfetivaUG,
+} from "./utils/business";
+import { Edit3, RotateCcw, Plus, X, Zap } from "lucide-react";
 import { UG_NOMES } from "./config";
 import FormularioRateio from "./components/FormularioRateio";
 
@@ -10,14 +20,14 @@ import FormularioRateio from "./components/FormularioRateio";
 function NavBtn({ ativo, onClick, children }) {
   return (
     <button onClick={onClick} className={`px-4 py-2 text-xs uppercase tracking-[0.18em] border transition-colors ${
-      ativo ? "border-amber-500/60 bg-amber-500/10 text-amber-300" : "border-stone-800 text-stone-500 hover:text-stone-300 hover:border-stone-700"
+      ativo ? "border-sun-500/60 bg-sun-100 text-sun-600" : "border-stone-200 text-stone-500 hover:text-stone-600 hover:border-stone-400"
     }`}>{children}</button>
   );
 }
 
-function StatBox({ label, valor, cor = "#fafaf9" }) {
+function StatBox({ label, valor, cor = "#1a1812" }) {
   return (
-    <div className="border border-stone-800 bg-stone-900/40 px-5 py-4">
+    <div className="border border-stone-200 bg-bone/60 px-5 py-4">
       <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-2">{label}</div>
       <div className="text-3xl font-mono" style={{ color: cor }}>{valor}</div>
     </div>
@@ -26,17 +36,17 @@ function StatBox({ label, valor, cor = "#fafaf9" }) {
 
 function Alerta({ cor, texto }) {
   const c = {
-    red:    "bg-red-950/30 border-red-900/60 text-red-300",
-    amber:  "bg-amber-950/30 border-amber-900/60 text-amber-300",
-    purple: "bg-purple-950/30 border-purple-900/60 text-purple-300",
-    stone:  "bg-stone-900 border-stone-700 text-stone-400",
+    red:    "bg-red-50 border-red-300 text-red-700",
+    amber:  "bg-sun-100 border-sun-300 text-sun-600",
+    purple: "bg-purple-50 border-purple-300 text-purple-700",
+    stone:  "bg-bone border-stone-300 text-stone-400",
   }[cor] || "";
   return <div className={`${c} border px-4 py-3 text-sm`}>{texto}</div>;
 }
 
-function MetricaBox({ label, valor, unidade, cor = "#fafaf9" }) {
+function MetricaBox({ label, valor, unidade, cor = "#1a1812" }) {
   return (
-    <div className="border border-stone-800 bg-stone-900/40 p-4">
+    <div className="border border-stone-200 bg-bone/60 p-4">
       <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-2">{label}</div>
       <div className="flex items-baseline gap-1.5">
         <span className="text-2xl font-mono" style={{ color: cor }}>{valor}</span>
@@ -49,24 +59,24 @@ function MetricaBox({ label, valor, unidade, cor = "#fafaf9" }) {
 function BannerValidacao({ ugs }) {
   const erros = ugs.filter(u => u.erro);
   if (!erros.length) return (
-    <div className="border border-emerald-900/50 bg-emerald-950/30 px-5 py-3 mb-6 flex items-center gap-3">
+    <div className="border border-emerald-300 bg-emerald-50 px-5 py-3 mb-6 flex items-center gap-3">
       <div className="w-2 h-2 rounded-full bg-emerald-500" />
-      <p className="text-sm text-emerald-300">Todas as {ugs.length} UGs com soma de rateio = 100% ✓</p>
+      <p className="text-sm text-emerald-700">Todas as {ugs.length} UGs com soma de rateio = 100% ✓</p>
     </div>
   );
   return (
-    <div className="border border-red-900/60 bg-red-950/30 px-5 py-3 mb-6">
+    <div className="border border-red-300 bg-red-50 px-5 py-3 mb-6">
       <div className="flex items-start gap-3">
         <div className="w-2 h-2 rounded-full bg-red-500 mt-2 shrink-0" />
         <div>
-          <p className="text-sm text-red-300 mb-2">
-            <strong className="text-red-200">{erros.length} UG{erros.length > 1 ? "s" : ""} com erro de soma de rateio.</strong> A soma deve ser 100%.
+          <p className="text-sm text-red-700 mb-2">
+            <strong className="text-red-800">{erros.length} UG{erros.length > 1 ? "s" : ""} com erro de soma de rateio.</strong> A soma deve ser 100%.
           </p>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-x-6 gap-y-1 text-xs">
             {erros.map(u => (
               <div key={u.nome} className="text-stone-400 font-mono flex justify-between gap-4">
                 <span>{u.nome}</span>
-                <span className={u.diff < 0 ? "text-amber-400" : "text-red-400"}>{u.diff > 0 ? "+" : ""}{u.diff.toFixed(0)}%</span>
+                <span className={u.diff < 0 ? "text-sun-500" : "text-red-600"}>{u.diff > 0 ? "+" : ""}{u.diff.toFixed(0)}%</span>
               </div>
             ))}
           </div>
@@ -80,28 +90,28 @@ function BannerValidacao({ ugs }) {
 function CardUG({ ug, onClick }) {
   const cap = ug.capacidade_kwh || 0;
   const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || 0), 0);
-  const car = cap > 0 ? (totalCMC / cap) * 100 : 0;
-  const corCar = car < 85 ? "#f59e0b" : car > 105 ? "#dc2626" : "#10b981";
+  const car = carregamentoUG(ug.clientes, ug);
+  const corCar = car < 85 ? "#b45309" : car > 105 ? "#b91c1c" : "#059669";
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
   const cont = { critico: 0, baixo: 0, ideal: 0, alto: 0, excessivo: 0 };
   ug.clientes.filter(c => !c.ehUCGeradora).forEach(c => { if (cont[c.status.nivel] !== undefined) cont[c.status.nivel]++; });
 
   return (
-    <button onClick={onClick} className="text-left bg-stone-900 border border-stone-700 hover:border-amber-500/60 hover:bg-stone-800/80 transition-all p-5 relative overflow-hidden">
+    <button onClick={onClick} className="text-left bg-bone border border-stone-300 hover:border-sun-500/60 hover:bg-stone-100 transition-all p-5 relative overflow-hidden">
       <div className="absolute top-3 right-3">
-        <span className={`text-[10px] tracking-[0.2em] uppercase px-1.5 py-0.5 border ${ug.tipo === "GD1" ? "border-amber-500/40 text-amber-400" : "border-stone-500/40 text-stone-400"}`}>{ug.tipo}</span>
+        <span className={`text-[10px] tracking-[0.2em] uppercase px-1.5 py-0.5 border ${ug.tipo === "GD1" ? "border-sun-500/40 text-sun-500" : "border-stone-500/40 text-stone-400"}`}>{ug.tipo}</span>
       </div>
       {ug.erro && (
         <div className="absolute top-3 left-3">
-          <span className="text-[10px] uppercase px-1.5 py-0.5 bg-red-950 text-red-400 border border-red-900">⚠ {ug.soma_rateio.toFixed(0)}%</span>
+          <span className="text-[10px] uppercase px-1.5 py-0.5 bg-red-50 text-red-600 border border-red-300">⚠ {ug.soma_rateio.toFixed(0)}%</span>
         </div>
       )}
       <div className="mt-6">
-        <h3 className="text-2xl text-stone-100 mb-1 tracking-tight" style={{ fontFamily: "Georgia, serif" }}>{ug.nome}</h3>
+        <h3 className="text-2xl text-ink mb-1 tracking-tight" style={{ fontFamily: "Fraunces, serif" }}>{ug.nome}</h3>
         <p className="text-[11px] text-stone-500 uppercase tracking-[0.18em] mb-1">{ug.clientes.filter(c => !c.ehUCGeradora).length} clientes · {cap.toFixed(0)} kWh/mês</p>
         {ucGer && (
           <p className="text-[10px] text-stone-600 mb-3 truncate">
-            <span className="text-amber-500/60">▸</span> {ucGer.nome}
+            <span className="text-sun-500/60">▸</span> {ucGer.nome}
             {ug.tipo === "GD2" && <span className="ml-2 font-mono text-stone-500">{(ucGer.saldo || 0).toFixed(0)} kWh travados</span>}
           </p>
         )}
@@ -110,18 +120,18 @@ function CardUG({ ug, onClick }) {
             <span className="text-[10px] uppercase tracking-[0.18em] text-stone-500">Carregamento</span>
             <span className="text-xl font-mono" style={{ color: corCar }}>{car.toFixed(0)}%</span>
           </div>
-          <div className="h-1 bg-stone-800 relative overflow-hidden">
+          <div className="h-1 bg-stone-200 relative overflow-hidden">
             <div className="absolute inset-y-0 left-0" style={{ width: `${Math.min(car, 130)}%`, backgroundColor: corCar }} />
             <div className="absolute inset-y-0 left-[85%] w-px bg-stone-600" />
             <div className="absolute inset-y-0 left-[105%] w-px bg-stone-600" />
           </div>
         </div>
         <div className="grid grid-cols-5 gap-1 mt-3">
-          {[["critico","#dc2626","CRT"],["baixo","#f59e0b","BX"],["ideal","#10b981","OK"],["alto","#3b82f6","ALT"],["excessivo","#7c3aed","XS"]].map(([k,cor,l]) => (
+          {[["critico","#b91c1c","CRT"],["baixo","#b45309","BX"],["ideal","#059669","OK"],["alto","#1d4ed8","ALT"],["excessivo","#6d28d9","XS"]].map(([k,cor,l]) => (
             <div key={k} className="text-center">
-              <div className="h-1 mb-1" style={{ backgroundColor: cont[k] > 0 ? cor : "#292524" }} />
+              <div className="h-1 mb-1" style={{ backgroundColor: cont[k] > 0 ? cor : "#e2dbcc" }} />
               <div className="text-[10px] text-stone-500">{l}</div>
-              <div className="text-sm font-mono text-stone-300">{cont[k] || "—"}</div>
+              <div className="text-sm font-mono text-stone-600">{cont[k] || "—"}</div>
             </div>
           ))}
         </div>
@@ -134,19 +144,19 @@ function CardUG({ ug, onClick }) {
 function DiagramaRow({ cliente, maxPct, onClick, ehGeradora }) {
   const larg = maxPct > 0 ? (cliente.rateio_pct / maxPct) * 100 : 0;
   return (
-    <button onClick={onClick} className="w-full text-left grid grid-cols-[1fr_auto] gap-3 items-center hover:bg-stone-800/40 px-2 py-1.5 transition-colors">
+    <button onClick={onClick} className="w-full text-left grid grid-cols-[1fr_auto] gap-3 items-center hover:bg-stone-200/50 px-2 py-1.5 transition-colors">
       <div className="min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          {ehGeradora && <span className="text-[9px] px-1 py-px bg-amber-900/40 text-amber-300 border border-amber-700 uppercase">geradora</span>}
-          <span className="text-xs text-stone-300 truncate">{cliente.nome}</span>
-          {cliente.travamentoSuspeito && <span className="text-[9px] text-red-400">⚠</span>}
+          {ehGeradora && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">geradora</span>}
+          <span className="text-xs text-stone-600 truncate">{cliente.nome}</span>
+          {cliente.travamentoSuspeito && <span className="text-[9px] text-red-600">⚠</span>}
         </div>
-        <div className="h-2 bg-stone-800 relative overflow-hidden">
+        <div className="h-2 bg-stone-200 relative overflow-hidden">
           <div className="absolute inset-y-0 left-0" style={{ width: `${Math.max(larg, cliente.rateio_pct > 0 ? 1 : 0)}%`, backgroundColor: cliente.status.cor }} />
         </div>
       </div>
       <div className="text-right min-w-[150px]">
-        <div className="font-mono text-stone-300">{cliente.rateio_pct}%</div>
+        <div className="font-mono text-stone-600">{cliente.rateio_pct}%</div>
         <div className="text-[10px] text-stone-500">
           saldo: <span className="font-mono">{(cliente.saldo||0).toFixed(0)}</span> · cmc: <span className="font-mono">{(cliente.cmc||0).toFixed(0)}</span>
           {(cliente.cmc||0) > 0 && (
@@ -160,25 +170,71 @@ function DiagramaRow({ cliente, maxPct, onClick, ehGeradora }) {
   );
 }
 
-// ─── DetalheCliente (modal) ───────────────────────────────────
-function DetalheCliente({ cliente, onClose }) {
-  if (!cliente) return null;
-  const chartData = (cliente.meses || []).map((mes, i) => ({
-    mes: mes.slice(0, 2),
-    saldo: cliente.saldoArr?.[i] ?? null,
-    consumo: cliente.consumoArr?.[i] ?? null,
+// ─── Helper: monta os 13 pontos do gráfico do cliente ─────────
+// Estrutura: 6 últimos meses históricos → ponto "Hoje" → 6 meses projetados.
+// Cada ponto pode ter combinações de: saldoHist, consumoHist, projAtual, projOtimizado.
+// O ponto "Hoje" carrega saldoHist (último real) E inicia projAtual/projOtimizado
+// no mesmo valor — fornecendo "ponte visual" entre passado e futuro.
+function montarChartData(cliente, ug, planoGlobal) {
+  const meses = cliente.meses || [];
+  const N_HIST = 6;
+  const N_PROJ = 6;
+  const ultimos = meses.slice(-N_HIST);
+  const offset = meses.length - ultimos.length;
+
+  const pontos = ultimos.map((m, i) => ({
+    label: m.slice(0, 2),
+    saldoHist:   cliente.saldoArr?.[offset + i] ?? null,
+    consumoHist: cliente.consumoArr?.[offset + i] ?? null,
   }));
+
+  const saldoNow = cliente.saldo || 0;
+  const cmc = cliente.cmcEfetivo || cliente.cmc || 0;
+  const distrib = distribuivelDaUG(ug);
+  const podeProjetar = !cliente.ehUCGeradora && cmc > 0 && distrib > 0;
+
+  // Ponto "Hoje" — ponte entre histórico e projeção.
+  pontos.push({
+    label: "hoje",
+    saldoHist: saldoNow,
+    projAtual: podeProjetar ? saldoNow : null,
+    projOtimizado: podeProjetar ? saldoNow : null,
+  });
+
+  if (!podeProjetar) return pontos;
+
+  const pctAtual = cliente.rateio_pct || 0;
+  const pctProposto = rateioPropostoDoCliente(cliente, ug, planoGlobal);
+  const projetar = (pct, n) => Math.max(0, saldoNow + n * ((pct / 100) * distrib - cmc));
+
+  for (let n = 1; n <= N_PROJ; n++) {
+    pontos.push({
+      label: `+${n}m`,
+      projAtual:     projetar(pctAtual, n),
+      projOtimizado: projetar(pctProposto, n),
+    });
+  }
+  return pontos;
+}
+
+// ─── DetalheCliente (modal) ───────────────────────────────────
+function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
+  if (!cliente) return null;
+  const ug = ugsValidadas?.find(u => u.nome === cliente.ug) || null;
+  const chartData = montarChartData(cliente, ug, planoGlobal);
+  const pctProposto = rateioPropostoDoCliente(cliente, ug, planoGlobal);
+  const propMudouRateio = ug && !cliente.ehUCGeradora && Math.round(pctProposto) !== Math.round(cliente.rateio_pct || 0);
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-6" onClick={onClose}>
-      <div className="bg-stone-950 border border-stone-700 max-w-3xl w-full max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <div className="p-6 border-b border-stone-800 flex justify-between items-start">
+    <div className="fixed inset-0 bg-forest-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-6" onClick={onClose}>
+      <div className="bg-bone border border-stone-200 max-w-3xl w-full max-h-[88vh] overflow-y-auto shadow-auri-lg" onClick={e => e.stopPropagation()}>
+        <div className="p-6 border-b border-stone-200 flex justify-between items-start">
           <div>
             <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500 mb-1">
-              {cliente.uc} · {cliente.ug || "Sem UG"} {cliente.tipoGd && <span className="text-amber-400/70 ml-1">{cliente.tipoGd}</span>}
+              {cliente.uc} · {cliente.ug || "Sem UG"} {cliente.tipoGd && <span className="text-sun-500/70 ml-1">{cliente.tipoGd}</span>}
             </p>
-            <h2 className="text-2xl text-stone-100" style={{ fontFamily: "Georgia, serif" }}>{cliente.nome}</h2>
+            <h2 className="text-2xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>{cliente.nome}</h2>
           </div>
-          <button onClick={onClose} className="text-stone-500 hover:text-stone-200 text-2xl leading-none">×</button>
+          <button onClick={onClose} className="text-stone-500 hover:text-stone-800 text-2xl leading-none">×</button>
         </div>
         <div className="p-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -192,23 +248,45 @@ function DetalheCliente({ cliente, onClose }) {
               ["Razão saldo/CMC", `${(cliente.status.razao||0).toFixed(2)}×`, cliente.status.cor],
               ["Emite cobrança", cliente.emite_cobranca ? "SIM" : "NÃO"],
             ].map(([l, v, c]) => (
-              <div key={l} className="border-l-2 border-stone-800 pl-3">
+              <div key={l} className="border-l-2 border-stone-200 pl-3">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-1">{l}</div>
-                <div className="text-lg font-mono" style={{ color: c || "#fafaf9" }}>{v}</div>
+                <div className="text-lg font-mono" style={{ color: c || "#1a1812" }}>{v}</div>
               </div>
             ))}
           </div>
-          {chartData.some(d => d.saldo !== null) && (
-            <div className="border border-stone-800 p-5 mb-5">
-              <h3 className="text-xs uppercase tracking-[0.2em] text-stone-500 mb-4">Saldo vs Consumo</h3>
-              <ResponsiveContainer width="100%" height={200}>
+          {chartData.some(d => d.saldoHist != null || d.projAtual != null) && (
+            <div className="border border-stone-200 p-5 mb-5">
+              <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
+                <h3 className="text-xs uppercase tracking-[0.2em] text-stone-500">Saldo: histórico + projeção 6m</h3>
+                <p className="text-[10px] text-stone-500">
+                  {propMudouRateio
+                    ? <>linhas tracejadas = projeção. <span className="text-sun-600">laranja</span> = mantém {cliente.rateio_pct}% · <span className="text-forest-600">verde</span> = otimizado para {Math.round(pctProposto)}%</>
+                    : <>linhas tracejadas = projeção mantendo rateio atual ({cliente.rateio_pct}%)</>}
+                </p>
+              </div>
+              <ResponsiveContainer width="100%" height={240}>
                 <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
-                  <XAxis dataKey="mes" stroke="#57534e" tick={{ fill: "#a8a29e", fontSize: 11 }} />
-                  <YAxis stroke="#57534e" tick={{ fill: "#a8a29e", fontSize: 11 }} />
-                  <Tooltip contentStyle={{ backgroundColor: "#1c1917", border: "1px solid #44403c", fontSize: 12 }} labelStyle={{ color: "#fafaf9" }} />
-                  <ReferenceLine y={cliente.colchaoIdeal} stroke="#10b981" strokeDasharray="3 3" />
-                  <Line type="monotone" dataKey="saldo" stroke="#f59e0b" strokeWidth={2} dot={{ fill: "#f59e0b", r: 3 }} name="Saldo" connectNulls={false} />
-                  <Line type="monotone" dataKey="consumo" stroke="#78716c" strokeWidth={1.5} dot={false} strokeDasharray="3 3" name="Consumo" connectNulls={false} />
+                  <XAxis dataKey="label" stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
+                  <YAxis stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: "#f5efe2", border: "1px solid #e2dbcc", fontSize: 12 }}
+                    labelStyle={{ color: "#1a1812" }}
+                    formatter={(v) => `${Math.round(v).toLocaleString("pt-BR")} kWh`}
+                  />
+                  <Legend
+                    iconType="plainline"
+                    wrapperStyle={{ fontSize: 11, color: "#6b6357", paddingTop: 8 }}
+                  />
+                  {cliente.colchaoIdeal > 0 && (
+                    <ReferenceLine y={cliente.colchaoIdeal} stroke="#059669" strokeDasharray="3 3" label={{ value: "colchão ideal", position: "insideTopRight", fill: "#059669", fontSize: 10 }} />
+                  )}
+                  <ReferenceLine x="hoje" stroke="#6b6357" strokeDasharray="2 4" label={{ value: "hoje", position: "top", fill: "#6b6357", fontSize: 10 }} />
+                  <Line type="monotone" dataKey="saldoHist" stroke="#b45309" strokeWidth={2} dot={{ fill: "#b45309", r: 3 }} name="Saldo (real)" connectNulls={false} />
+                  <Line type="monotone" dataKey="consumoHist" stroke="#a89e89" strokeWidth={1.5} dot={false} strokeDasharray="3 3" name="Consumo (real)" connectNulls={false} />
+                  <Line type="monotone" dataKey="projAtual" stroke="#e8a93c" strokeWidth={2} strokeDasharray="4 4" dot={{ fill: "#e8a93c", r: 2 }} name="Projeção · rateio atual" connectNulls={false} />
+                  {propMudouRateio && (
+                    <Line type="monotone" dataKey="projOtimizado" stroke="#3a6650" strokeWidth={2} strokeDasharray="4 4" dot={{ fill: "#3a6650", r: 2 }} name="Projeção · rateio otimizado" connectNulls={false} />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -255,11 +333,11 @@ function TabelaClientes({ clientes, onClickCliente }) {
       <div className="mb-5 flex flex-wrap gap-3 items-end">
         <div>
           <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Buscar</label>
-          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Nome ou UC" className="bg-stone-900 border border-stone-700 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60 w-52" />
+          <input value={busca} onChange={e => setBusca(e.target.value)} placeholder="Nome ou UC" className="bg-bone border border-stone-300 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60 w-52" />
         </div>
         <div>
           <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">UG</label>
-          <select value={filtroUG} onChange={e => setFiltroUG(e.target.value)} className="bg-stone-900 border border-stone-700 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60">
+          <select value={filtroUG} onChange={e => setFiltroUG(e.target.value)} className="bg-bone border border-stone-300 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
             <option value="todas">Todas</option>
             {UG_NOMES.map(n => <option key={n} value={n}>{n}</option>)}
             <option value="null">Sem alocação</option>
@@ -267,22 +345,22 @@ function TabelaClientes({ clientes, onClickCliente }) {
         </div>
         <div>
           <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Status</label>
-          <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-stone-900 border border-stone-700 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60">
+          <select value={filtroStatus} onChange={e => setFiltroStatus(e.target.value)} className="bg-bone border border-stone-300 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
             {[["todos","Todos"],["critico","Crítico"],["baixo","Baixo"],["ideal","Ideal"],["alto","Alto"],["excessivo","Excessivo"],["geradora","UC Geradora"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Ordenar</label>
-          <select value={ord} onChange={e => setOrd(e.target.value)} className="bg-stone-900 border border-stone-700 px-3 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60">
+          <select value={ord} onChange={e => setOrd(e.target.value)} className="bg-bone border border-stone-300 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
             {[["status","Prioridade"],["saldo_d","Maior saldo"],["saldo_a","Menor saldo"],["razao","Maior razão"],["nome","Nome"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
         <div className="ml-auto text-xs text-stone-500 font-mono pb-2">{lista.length} / {clientes.length}</div>
       </div>
-      <div className="border border-stone-800 overflow-x-auto">
+      <div className="border border-stone-200 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="bg-stone-900 border-b border-stone-800">
+            <tr className="bg-bone border-b border-stone-200">
               {["Cliente","UG","% Rateio","Saldo kWh","CMC kWh","Razão","Status","Flags"].map(h => (
                 <th key={h} className="text-left px-3 py-3 text-[10px] uppercase tracking-[0.18em] text-stone-500 font-normal whitespace-nowrap">{h}</th>
               ))}
@@ -290,18 +368,18 @@ function TabelaClientes({ clientes, onClickCliente }) {
           </thead>
           <tbody>
             {lista.map((c, i) => (
-              <tr key={c.uc} onClick={() => onClickCliente(c)} className={`border-b border-stone-800/60 hover:bg-stone-900/50 cursor-pointer ${i % 2 === 0 ? "bg-stone-950" : "bg-stone-950/50"}`}>
+              <tr key={c.uc} onClick={() => onClickCliente(c)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
                 <td className="px-3 py-2.5">
-                  <div className="text-stone-200 truncate max-w-[180px]">{c.nome}</div>
+                  <div className="text-stone-800 truncate max-w-[180px]">{c.nome}</div>
                   <div className="text-[10px] text-stone-600 font-mono">{c.uc}</div>
                 </td>
                 <td className="px-3 py-2.5 whitespace-nowrap">
                   {c.ug
-                    ? <span className="text-stone-300 text-xs">{c.ug} <span className={`text-[9px] ${c.tipoGd === "GD1" ? "text-amber-400/70" : "text-stone-500"}`}>{c.tipoGd}</span></span>
+                    ? <span className="text-stone-600 text-xs">{c.ug} <span className={`text-[9px] ${c.tipoGd === "GD1" ? "text-sun-500/70" : "text-stone-500"}`}>{c.tipoGd}</span></span>
                     : <span className="text-stone-600 text-xs italic">—</span>}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-stone-300">{c.rateio_pct}%</td>
-                <td className="px-3 py-2.5 text-right font-mono text-stone-300">{(c.saldo||0).toFixed(0)}</td>
+                <td className="px-3 py-2.5 text-right font-mono text-stone-600">{c.rateio_pct}%</td>
+                <td className="px-3 py-2.5 text-right font-mono text-stone-600">{(c.saldo||0).toFixed(0)}</td>
                 <td className="px-3 py-2.5 text-right font-mono text-stone-400">{(c.cmc||0).toFixed(0)}</td>
                 <td className="px-3 py-2.5 text-right font-mono" style={{ color: c.status.cor }}>{c.status.razao > 0 ? c.status.razao.toFixed(1) : "—"}</td>
                 <td className="px-3 py-2.5">
@@ -312,10 +390,10 @@ function TabelaClientes({ clientes, onClickCliente }) {
                 </td>
                 <td className="px-3 py-2.5">
                   <div className="flex flex-wrap gap-1">
-                    {c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-amber-900/40 text-amber-300 border border-amber-700 uppercase">ger.</span>}
-                    {c.travamentoSuspeito && <span className="text-[9px] px-1 py-px bg-red-950/50 text-red-400 border border-red-900 uppercase">trv?</span>}
-                    {!c.ug && <span className="text-[9px] px-1 py-px bg-amber-950/50 text-amber-400 border border-amber-900 uppercase">s/ug</span>}
-                    {c.rateio_pct === 0 && c.ug && !c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-blue-950/50 text-blue-400 border border-blue-900 uppercase">0%</span>}
+                    {c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">ger.</span>}
+                    {c.travamentoSuspeito && <span className="text-[9px] px-1 py-px bg-red-50 text-red-600 border border-red-300 uppercase">trv?</span>}
+                    {!c.ug && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">s/ug</span>}
+                    {c.rateio_pct === 0 && c.ug && !c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-blue-50 text-blue-600 border border-blue-300 uppercase">0%</span>}
                   </div>
                 </td>
               </tr>
@@ -333,23 +411,23 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
   const benef = ug.clientes.filter(c => !c.ehUCGeradora).sort((a, b) => b.rateio_pct - a.rateio_pct);
   const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || 0), 0);
   const cap = ug.capacidade_kwh || 0;
-  const car = cap > 0 ? (totalCMC / cap) * 100 : 0;
+  const car = carregamentoUG(ug.clientes, ug);
   const maxPct = Math.max(...ug.clientes.map(c => c.rateio_pct), 50);
   const planoUG = planoGlobal?.por_ug?.[ug.nome];
   const realocacoesUG = (planoGlobal?.realocar || []).filter(r => r.ug_origem === ug.nome || r.ug_destino === ug.nome);
 
   return (
     <div>
-      <button onClick={onVoltar} className="text-xs text-stone-500 hover:text-stone-300 mb-4 uppercase tracking-[0.18em]">← Voltar</button>
+      <button onClick={onVoltar} className="text-xs text-stone-500 hover:text-stone-600 mb-4 uppercase tracking-[0.18em]">← Voltar</button>
       <div className="flex items-baseline justify-between mb-6 flex-wrap gap-3">
         <div>
-          <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500 mb-1">Unidade Geradora <span className="text-amber-400/70 ml-2">{ug.tipo}</span></p>
-          <h2 className="text-4xl text-stone-100" style={{ fontFamily: "Georgia, serif" }}>{ug.nome}</h2>
+          <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500 mb-1">Unidade Geradora <span className="text-sun-500/70 ml-2">{ug.tipo}</span></p>
+          <h2 className="text-4xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>{ug.nome}</h2>
         </div>
         {ug.erro && (
           <div className="text-right">
-            <p className="text-xs uppercase text-red-400">Erro de rateio</p>
-            <p className="text-2xl font-mono text-red-400">{ug.soma_rateio.toFixed(0)}%</p>
+            <p className="text-xs uppercase text-red-600">Erro de rateio</p>
+            <p className="text-2xl font-mono text-red-600">{ug.soma_rateio.toFixed(0)}%</p>
             <p className="text-[10px] text-stone-500">esperado: 100%</p>
           </div>
         )}
@@ -357,15 +435,15 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
         <MetricaBox label="Capacidade" valor={cap.toFixed(0)} unidade="kWh/mês" />
         <MetricaBox label="Demanda (soma CMC)" valor={totalCMC.toFixed(0)} unidade="kWh/mês" />
-        <MetricaBox label="Carregamento" valor={`${car.toFixed(0)}%`} cor={car < 85 ? "#f59e0b" : car > 105 ? "#dc2626" : "#10b981"} />
-        <MetricaBox label={ug.tipo === "GD2" ? "Saldo travado (geradora)" : "Saldo UC geradora"} valor={ucGer ? (ucGer.saldo||0).toFixed(0) : "—"} unidade="kWh" cor="#a8a29e" />
+        <MetricaBox label="Carregamento" valor={`${car.toFixed(0)}%`} cor={car < 85 ? "#b45309" : car > 105 ? "#b91c1c" : "#059669"} />
+        <MetricaBox label={ug.tipo === "GD2" ? "Saldo travado (geradora)" : "Saldo UC geradora"} valor={ucGer ? (ucGer.saldo||0).toFixed(0) : "—"} unidade="kWh" cor="#6b6357" />
       </div>
       {ucGer && (
-        <div className="mb-8 border border-amber-900/40 bg-amber-950/20 p-5">
+        <div className="mb-8 border border-sun-300 bg-sun-100/70 p-5">
           <div className="flex items-start gap-3">
-            <div className="text-amber-500 text-lg mt-0.5">▸</div>
+            <div className="text-sun-500 text-lg mt-0.5">▸</div>
             <div>
-              <p className="text-sm text-amber-200 mb-1"><strong>UC Geradora:</strong> {ucGer.nome} <span className="font-mono text-stone-400 text-xs ml-2">{ucGer.uc}</span></p>
+              <p className="text-sm text-sun-600 mb-1"><strong>UC Geradora:</strong> {ucGer.nome} <span className="font-mono text-stone-400 text-xs ml-2">{ucGer.uc}</span></p>
               <p className="text-xs text-stone-400 leading-relaxed">
                 {ug.tipo === "GD2"
                   ? `GD2 — saldo de ${(ucGer.saldo||0).toFixed(0)} kWh preso. Apenas excedente após autoconsumo (~${(ucGer.cmc||0).toFixed(0)} kWh/mês) é distribuído às beneficiárias.`
@@ -375,7 +453,7 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
           </div>
         </div>
       )}
-      <div className="mb-4 border border-stone-800 p-6 bg-stone-900/30">
+      <div className="mb-4 border border-stone-200 p-6 bg-bone/50">
         <div className="flex items-baseline justify-between mb-4">
           <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400">Distribuição de Rateio</h3>
           <p className="text-xs text-stone-500">largura = % · cor = status do saldo</p>
@@ -384,12 +462,12 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
           {ucGer && <DiagramaRow cliente={ucGer} maxPct={maxPct} onClick={() => onClickCliente(ucGer)} ehGeradora />}
           {benef.map(c => <DiagramaRow key={c.uc} cliente={c} maxPct={maxPct} onClick={() => onClickCliente(c)} />)}
         </div>
-        <div className="mt-4 pt-4 border-t border-stone-800 flex justify-between text-xs">
+        <div className="mt-4 pt-4 border-t border-stone-200 flex justify-between text-xs">
           <span className="text-stone-500 uppercase tracking-[0.18em]">Soma total</span>
-          <span className={`font-mono text-base ${ug.erro ? "text-red-400" : "text-emerald-400"}`}>{ug.soma_rateio.toFixed(0)}% / 100%</span>
+          <span className={`font-mono text-base ${ug.erro ? "text-red-600" : "text-emerald-600"}`}>{ug.soma_rateio.toFixed(0)}% / 100%</span>
         </div>
       </div>
-      <div className="border border-stone-800 p-6 bg-stone-900/30 mb-4">
+      <div className="border border-stone-200 p-6 bg-bone/50 mb-4">
         <div className="flex items-baseline justify-between mb-4">
           <div>
             <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400">Ajustes de Rateio Sugeridos</h3>
@@ -399,7 +477,7 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
             <div className="text-right text-xs font-mono">
               <span className="text-stone-500">{planoUG.soma_antes.toFixed(0)}%</span>
               <span className="text-stone-600 mx-1">→</span>
-              <span className={planoUG.soma_depois === 100 ? "text-emerald-400" : "text-red-400"}>{planoUG.soma_depois}%</span>
+              <span className={planoUG.soma_depois === 100 ? "text-emerald-600" : "text-red-600"}>{planoUG.soma_depois}%</span>
             </div>
           )}
         </div>
@@ -407,10 +485,10 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
           <p className="text-center py-4 text-stone-500 text-sm">Rateio interno já equilibrado. Nenhum ajuste necessário.</p>
         ) : (
           <div>
-            <div className="border border-stone-800 overflow-x-auto mb-3">
+            <div className="border border-stone-200 overflow-x-auto mb-3">
               <table className="w-full text-xs">
                 <thead>
-                  <tr className="bg-stone-900 border-b border-stone-800">
+                  <tr className="bg-bone border-b border-stone-200">
                     {["Cliente","UC","Atual","Sugerido","Δ","Saldo (meses)","Normaliza em"].map(h => (
                       <th key={h} className="text-left px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-500 font-normal whitespace-nowrap">{h}</th>
                     ))}
@@ -418,21 +496,21 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
                 </thead>
                 <tbody>
                   {planoUG.acoes.map((a, i) => (
-                    <tr key={i} className={`border-b border-stone-800/60 ${i % 2 === 0 ? "bg-stone-950" : "bg-stone-950/50"}`}>
+                    <tr key={i} className={`border-b border-stone-200/80 ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
                       <td className="px-3 py-2">
-                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-300 hover:text-amber-300 text-left truncate max-w-[160px] block">{a.cliente.nome}</button>
+                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-600 hover:text-sun-600 text-left truncate max-w-[160px] block">{a.cliente.nome}</button>
                       </td>
                       <td className="px-3 py-2 font-mono text-[10px] text-stone-500 whitespace-nowrap">{a.cliente.uc}</td>
                       <td className="px-3 py-2 text-right font-mono text-stone-400">{a.de}%</td>
-                      <td className="px-3 py-2 text-right font-mono text-amber-400">{a.para}%</td>
+                      <td className="px-3 py-2 text-right font-mono text-sun-500">{a.para}%</td>
                       <td className="px-3 py-2 text-right font-mono">
-                        <span className={a.delta > 0 ? "text-emerald-400" : "text-red-400"}>{a.delta > 0 ? "+" : ""}{a.delta}%</span>
+                        <span className={a.delta > 0 ? "text-emerald-600" : "text-red-600"}>{a.delta > 0 ? "+" : ""}{a.delta}%</span>
                       </td>
                       <td className="px-3 py-2 text-right font-mono" style={{ color: a.cliente.status.cor }}>
                         {a.cliente.cmc > 0 ? (a.cliente.saldo / a.cliente.cmc).toFixed(1) : "—"}
                       </td>
                       <td className="px-3 py-2 text-right font-mono text-stone-400">
-                        {a.meses === 0 ? <span className="text-emerald-400">✓ ok</span> : a.meses >= 999 ? <span className="text-red-400">sem dreno</span> : `${a.meses}m`}
+                        {a.meses === 0 ? <span className="text-emerald-600">✓ ok</span> : a.meses >= 999 ? <span className="text-red-600">sem dreno</span> : `${a.meses}m`}
                       </td>
                     </tr>
                   ))}
@@ -446,29 +524,29 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
         )}
       </div>
       {realocacoesUG.length > 0 && (
-        <div className="border border-amber-900/40 bg-amber-950/10 p-6">
+        <div className="border border-sun-300 bg-sun-100/40 p-6">
           <div className="flex items-baseline justify-between mb-4">
             <div>
-              <h3 className="text-xs uppercase tracking-[0.2em] text-amber-400/80">Realocações Cross-UG Sugeridas</h3>
+              <h3 className="text-xs uppercase tracking-[0.2em] text-sun-500/80">Realocações Cross-UG Sugeridas</h3>
               <p className="text-[10px] text-stone-600 mt-1">Mover clientes entre UGs para melhor equilíbrio do sistema</p>
             </div>
             <span className="text-xs text-stone-500">{realocacoesUG.length} sugestão{realocacoesUG.length > 1 ? "ões" : ""}</span>
           </div>
           <div className="space-y-3">
             {realocacoesUG.map((r, i) => (
-              <div key={i} className="border border-amber-900/30 bg-stone-950 p-4">
+              <div key={i} className="border border-sun-200 bg-cream p-4">
                 <div className="flex items-start gap-3">
-                  <div className="font-mono text-amber-500 text-base w-6 h-6 flex items-center justify-center shrink-0">⇄</div>
+                  <div className="font-mono text-sun-500 text-base w-6 h-6 flex items-center justify-center shrink-0">⇄</div>
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <button onClick={() => onClickCliente(r.cliente)} className="text-stone-200 text-sm hover:text-amber-300">{r.cliente.nome}</button>
-                      <span className="text-[10px] px-1.5 py-px bg-stone-800 text-stone-400 font-mono">CMC {r.cliente.cmc.toFixed(0)} kWh</span>
+                      <button onClick={() => onClickCliente(r.cliente)} className="text-stone-800 text-sm hover:text-sun-600">{r.cliente.nome}</button>
+                      <span className="text-[10px] px-1.5 py-px bg-stone-200 text-stone-400 font-mono">CMC {r.cliente.cmc.toFixed(0)} kWh</span>
                       <span className="text-xs" style={{ color: r.cliente.status.cor }}>{r.cliente.status.label}</span>
                     </div>
                     <div className="flex items-center gap-2 mb-2 text-xs">
                       <span className="text-stone-400 font-mono">{r.ug_origem}</span>
-                      <span className="text-amber-500">→</span>
-                      <span className="text-emerald-400 font-mono">{r.ug_destino}</span>
+                      <span className="text-sun-500">→</span>
+                      <span className="text-emerald-600 font-mono">{r.ug_destino}</span>
                     </div>
                     <p className="text-[11px] text-stone-500 leading-relaxed">{r.descricao}</p>
                   </div>
@@ -485,9 +563,9 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
 // ─── Otimizador ──────────────────────────────────────────────
 function corDelta(delta) {
   const m = Math.abs(delta);
-  if (m < 5) return "#10b981";   // verde — ajuste fino
-  if (m < 15) return "#f59e0b";  // âmbar — ajuste moderado
-  return "#dc2626";              // vermelho — mudança grande
+  if (m < 5) return "#059669";   // verde — ajuste fino
+  if (m < 15) return "#b45309";  // âmbar — ajuste moderado
+  return "#b91c1c";              // vermelho — mudança grande
 }
 
 function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) {
@@ -498,14 +576,14 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-2xl text-stone-200 mb-1" style={{ fontFamily: "Georgia, serif" }}>Otimizador Global</h2>
+        <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>Otimizador Global</h2>
         <p className="text-xs text-stone-500">Análise cruzada de todas as UGs. Convergência incremental ~6 meses, mínimo impacto.</p>
         {resumo.ugs_total !== undefined && (
           <div className="flex gap-4 mt-3 text-[10px] uppercase tracking-[0.18em] text-stone-500">
-            <span><span className="text-emerald-400 font-mono">{resumo.ugs_balanceadas}</span>/{resumo.ugs_total} UGs em 95–105%</span>
-            {resumo.total_acoes_internas > 0 && <span><span className="text-amber-400 font-mono">{resumo.total_acoes_internas}</span> ajustes internos</span>}
-            {resumo.total_swaps > 0 && <span><span className="text-purple-400 font-mono">{resumo.total_swaps}</span> realocações</span>}
-            {resumo.total_orfas > 0 && <span><span className="text-cyan-400 font-mono">{resumo.total_orfas}</span> órfãs</span>}
+            <span><span className="text-emerald-600 font-mono">{resumo.ugs_balanceadas}</span>/{resumo.ugs_total} UGs em 95–105%</span>
+            {resumo.total_acoes_internas > 0 && <span><span className="text-sun-500 font-mono">{resumo.total_acoes_internas}</span> ajustes internos</span>}
+            {resumo.total_swaps > 0 && <span><span className="text-purple-600 font-mono">{resumo.total_swaps}</span> realocações</span>}
+            {resumo.total_orfas > 0 && <span><span className="text-cyan-600 font-mono">{resumo.total_orfas}</span> órfãs</span>}
             {resumo.total_sinalizacoes > 0 && <span><span className="text-stone-400 font-mono">{resumo.total_sinalizacoes}</span> sinalizações</span>}
           </div>
         )}
@@ -518,26 +596,32 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
           const nAjustes = plUG?.acoes?.length || 0;
           const cap = ug.capacidade_kwh || 0;
           const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmcEfetivo || c.cmc || 0), 0);
-          const car = cap > 0 ? (totalCMC / cap) * 100 : 0;
-          const corCar = car < 95 ? "#f59e0b" : car > 105 ? "#dc2626" : "#10b981";
+          const car = carregamentoUG(ug.clientes, ug);
+          const corCar = car < 95 ? "#b45309" : car > 105 ? "#b91c1c" : "#059669";
           return (
-            <button key={ug.nome} onClick={() => onVerUG(ug.nome)} className="text-left border border-stone-800 bg-stone-900/40 hover:border-amber-500/40 p-5 transition-colors">
+            <button key={ug.nome} onClick={() => onVerUG(ug.nome)} className="text-left border border-stone-200 bg-bone/60 hover:border-sun-500/40 p-5 transition-colors">
               <div className="flex items-baseline justify-between mb-2">
-                <span className="text-lg text-stone-100" style={{ fontFamily: "Georgia, serif" }}>{ug.nome}</span>
-                <span className={`text-[10px] px-1.5 py-px border ${ug.tipo === "GD1" ? "border-amber-500/40 text-amber-400" : "border-stone-600 text-stone-400"}`}>{ug.tipo}</span>
+                <span className="text-lg text-ink" style={{ fontFamily: "Fraunces, serif" }}>{ug.nome}</span>
+                <span className={`text-[10px] px-1.5 py-px border ${ug.tipo === "GD1" ? "border-sun-500/40 text-sun-500" : "border-stone-600 text-stone-400"}`}>{ug.tipo}</span>
+              </div>
+              <div className="flex items-center justify-between gap-2 mb-1">
+                {(() => { const e = estadoCarregamento(car); return (
+                  <span className="text-[9px] uppercase tracking-[0.15em]" style={{ color: e.cor }}>{e.label}</span>
+                ); })()}
+                <span className="text-[9px] uppercase tracking-[0.15em] text-stone-400">Carregamento</span>
               </div>
               <div className="flex items-center gap-2 mb-3">
-                <div className="h-1 flex-1 bg-stone-800 relative overflow-hidden">
+                <div className="h-1 flex-1 bg-stone-200 relative overflow-hidden">
                   <div className="absolute inset-y-0 left-0" style={{ width: `${Math.min(car, 130)}%`, backgroundColor: corCar }} />
                 </div>
                 <span className="text-sm font-mono" style={{ color: corCar }}>{car.toFixed(0)}%</span>
               </div>
               <div className="flex gap-4 text-[11px]">
-                <span className={nAjustes > 0 ? "text-amber-400" : "text-stone-600"}>
-                  {nAjustes > 0 ? `${nAjustes} ajuste${nAjustes > 1 ? "s" : ""}` : "rateio ok"}
-                </span>
-                <span className={reals.length > 0 ? "text-purple-400" : "text-stone-600"}>
+                <span className={reals.length > 0 ? "text-purple-600" : "text-stone-600"} title="Ações que mudam o carregamento">
                   {reals.length > 0 ? `${reals.length} realocação${reals.length > 1 ? "ões" : ""}` : "sem realocação"}
+                </span>
+                <span className={nAjustes > 0 ? "text-sun-500" : "text-stone-600"} title="Saúde de saldo — não altera carregamento">
+                  {nAjustes > 0 ? `${nAjustes} ajuste${nAjustes > 1 ? "s" : ""} (saldo)` : "rateio ok"}
                 </span>
               </div>
             </button>
@@ -546,48 +630,50 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
       </div>
 
       {alocacaoInicial.length > 0 && (
-        <div className="border border-cyan-500/30 p-6 bg-stone-900/30 mb-6">
+        <div className="border border-cyan-400 p-6 bg-bone/50 mb-6">
           <div className="flex items-baseline justify-between mb-5">
             <div>
-              <h3 className="text-sm uppercase tracking-[0.2em] text-cyan-300">Alocações Iniciais</h3>
+              <h3 className="text-sm uppercase tracking-[0.2em] text-cyan-700">Alocações Iniciais</h3>
               <p className="text-[10px] text-stone-600 mt-1">UCs sem UG associada — sugestão de alocação inicial</p>
             </div>
             <span className="text-xs text-stone-500 font-mono">{alocacaoInicial.length}</span>
           </div>
           <div className="space-y-3">
             {alocacaoInicial.map((a, i) => {
-              const sevCor = a.severidade === "critica" ? "#dc2626"
-                : a.severidade === "alta" ? "#f59e0b"
-                : a.severidade === "media" ? "#3b82f6"
+              const sevCor = a.severidade === "critica" ? "#b91c1c"
+                : a.severidade === "alta" ? "#b45309"
+                : a.severidade === "media" ? "#1d4ed8"
                 : "#22d3ee";
-              const sevIcon = a.motivo === "alocacao_forcada" ? "⚠" : "+";
+              const sevIcon = a.motivo === "sem_capacidade" || a.motivo === "sem_ugs_disponiveis" ? "✕"
+                : a.motivo === "alocacao_forcada" ? "⚠" : "+";
               const sevLabel = {
-                alocacao_inicial: "Folga ideal",
-                alocacao_forcada: "Alocação forçada",
+                alocacao_inicial: "Encaixe justo",
+                alocacao_forcada: "Sobrecarga temporária",
                 sem_ugs_disponiveis: "Sem UG disponível",
+                sem_capacidade: "Sem capacidade — aguardar nova UG",
               }[a.motivo] || a.motivo;
               return (
-                <div key={i} className="border border-stone-800 bg-stone-950 p-4">
+                <div key={i} className="border border-stone-200 bg-cream p-4">
                   <div className="flex items-start gap-3">
                     <div className="w-7 h-7 border flex items-center justify-center shrink-0 font-mono text-sm" style={{ borderColor: sevCor, color: sevCor }}>{sevIcon}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-200 text-sm hover:text-amber-300">{a.cliente.nome}</button>
+                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-800 text-sm hover:text-sun-600">{a.cliente.nome}</button>
                         <span className="text-[10px] font-mono text-stone-500">{a.cliente.uc}</span>
-                        <span className="text-[10px] px-1 py-px bg-stone-800 font-mono text-stone-400">CMC ef. {a.cliente.cmcEfetivo.toFixed(0)} kWh</span>
+                        <span className="text-[10px] px-1 py-px bg-stone-200 font-mono text-stone-400">CMC ef. {a.cliente.cmcEfetivo.toFixed(0)} kWh</span>
                         <span className="text-[10px] px-1 py-px font-mono uppercase tracking-wider" style={{ color: sevCor, borderLeft: `2px solid ${sevCor}`, paddingLeft: 6 }}>{sevLabel}</span>
                       </div>
                       {a.ug_destino ? (
                         <div className="flex items-center gap-2 mb-2 text-xs flex-wrap">
                           <span className="text-stone-500">sem UG</span>
-                          <span className="text-amber-500 font-bold">→</span>
-                          <span className="text-emerald-400">{a.ug_destino}</span>
+                          <span className="text-sun-500 font-bold">→</span>
+                          <span className="text-emerald-600">{a.ug_destino}</span>
                           <span className="text-stone-600">·</span>
-                          <span className="text-cyan-300">{a.pct_inicial}%</span>
+                          <span className="text-cyan-700">{a.pct_inicial}%</span>
                           {a.carregamento_resultante !== undefined && (
                             <>
                               <span className="text-stone-600">·</span>
-                              <span className="font-mono" style={{ color: a.carregamento_resultante > 105 ? "#f59e0b" : "#10b981" }}>
+                              <span className="font-mono" style={{ color: a.carregamento_resultante > 105 ? "#b45309" : "#059669" }}>
                                 UG → {a.carregamento_resultante}%
                               </span>
                             </>
@@ -607,8 +693,16 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
                             </>
                           )}
                         </div>
+                      ) : a.motivo === "sem_capacidade" ? (
+                        <div className="flex items-center gap-2 mb-2 text-xs flex-wrap">
+                          <span className="text-stone-500">sem UG</span>
+                          <span className="text-stone-400">·</span>
+                          <span className="font-mono" style={{ color: "#b91c1c" }}>melhor caso → {a.carregamento_melhor_caso}% (estoura)</span>
+                          <span className="text-stone-400">·</span>
+                          <span className="text-sun-600 uppercase tracking-wider text-[10px]">aguardar nova geração</span>
+                        </div>
                       ) : (
-                        <div className="text-xs text-amber-400 mb-2">sem UG disponível</div>
+                        <div className="text-xs text-sun-500 mb-2">sem UG disponível</div>
                       )}
                       <p className="text-[11px] text-stone-500 leading-relaxed">{a.descricao}</p>
                     </div>
@@ -620,7 +714,7 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
         </div>
       )}
 
-      <div className="border border-stone-800 p-6 bg-stone-900/30 mb-6">
+      <div className="border border-stone-200 p-6 bg-bone/50 mb-6">
         <div className="flex items-baseline justify-between mb-5">
           <div>
             <h3 className="text-sm uppercase tracking-[0.2em] text-stone-400">Realocações Cross-UG</h3>
@@ -633,24 +727,24 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
         ) : (
           <div className="space-y-3">
             {planoGlobal.realocar.map((r, i) => {
-              const corSev = r.severidade === "alta" ? "#dc2626" : "#f59e0b";
+              const corSev = r.severidade === "alta" ? "#b91c1c" : "#b45309";
               const iconMotivo = { sobrecarga: "⚡", subutilizada: "↓", preenche_folga: "↑", rebalanceamento: "⇄", saldo_excessivo: "↓", critico_sem_capacidade: "⚠" }[r.motivo] || "⇄";
               const labelMotivo = { sobrecarga: "Origem sobrecarregada", subutilizada: "Origem subutilizada", preenche_folga: "Destino subutilizado", rebalanceamento: "Rebalanceamento", saldo_excessivo: "Saldo excessivo", critico_sem_capacidade: "Crítico sem capacidade" }[r.motivo] || r.motivo;
               return (
-                <div key={i} className="border border-stone-800 bg-stone-950 p-4">
+                <div key={i} className="border border-stone-200 bg-cream p-4">
                   <div className="flex items-start gap-3">
                     <div className="w-7 h-7 border flex items-center justify-center shrink-0 font-mono text-sm" style={{ borderColor: corSev, color: corSev }}>{iconMotivo}</div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
-                        <button onClick={() => onClickCliente(r.cliente)} className="text-stone-200 text-sm hover:text-amber-300">{r.cliente.nome}</button>
+                        <button onClick={() => onClickCliente(r.cliente)} className="text-stone-800 text-sm hover:text-sun-600">{r.cliente.nome}</button>
                         <span className="text-[10px] font-mono text-stone-500">{r.cliente.uc}</span>
-                        <span className="text-[10px] px-1 py-px bg-stone-800 font-mono text-stone-400">CMC {(r.cliente.cmcEfetivo || r.cliente.cmc).toFixed(0)} kWh</span>
+                        <span className="text-[10px] px-1 py-px bg-stone-200 font-mono text-stone-400">CMC {(r.cliente.cmcEfetivo || r.cliente.cmc).toFixed(0)} kWh</span>
                         <span className="text-xs" style={{ color: r.cliente.status.cor }}>{r.cliente.status.label}</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2 text-xs flex-wrap">
                         <span className="text-stone-400">{r.ug_origem}</span>
-                        <span className="text-amber-500 font-bold">→</span>
-                        <span className="text-emerald-400">{r.ug_destino}</span>
+                        <span className="text-sun-500 font-bold">→</span>
+                        <span className="text-emerald-600">{r.ug_destino}</span>
                         <span className="text-stone-600">·</span>
                         <span className="text-stone-500">{labelMotivo}</span>
                       </div>
@@ -664,51 +758,51 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
         )}
       </div>
 
-      <div className="border border-stone-800 p-6 bg-stone-900/30 mb-6">
+      <div className="border border-stone-200 p-6 bg-bone/50 mb-6">
         <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400 mb-5">Resumo de Ajustes Internos por UG</h3>
         {Object.entries(planoGlobal.por_ug).length === 0 ? (
           <p className="text-center py-6 text-stone-500 text-sm">Todos os rateios internos estão equilibrados.</p>
         ) : (
           <div className="space-y-4">
             {Object.entries(planoGlobal.por_ug).map(([ugNome, plano]) => (
-              <div key={ugNome} className="border border-stone-800">
-                <div className="flex items-center justify-between px-4 py-3 bg-stone-900 border-b border-stone-800">
-                  <button onClick={() => onVerUG(ugNome)} className="text-stone-200 hover:text-amber-300 text-sm">{ugNome}</button>
+              <div key={ugNome} className="border border-stone-200">
+                <div className="flex items-center justify-between px-4 py-3 bg-bone border-b border-stone-200">
+                  <button onClick={() => onVerUG(ugNome)} className="text-stone-800 hover:text-sun-600 text-sm">{ugNome}</button>
                   <div className="flex items-center gap-4 font-mono text-xs">
                     {plano.n_fixas > 0 && (
                       <span className="text-[10px] text-stone-500">
-                        fixas <span className="text-stone-300">{plano.n_fixas}</span> · ajust. <span className="text-stone-300">{plano.n_ajustaveis}</span> · S_aj <span className="text-stone-300">{plano.S_aj}%</span>
+                        fixas <span className="text-stone-600">{plano.n_fixas}</span> · ajust. <span className="text-stone-600">{plano.n_ajustaveis}</span> · S_aj <span className="text-stone-600">{plano.S_aj}%</span>
                       </span>
                     )}
                     <span>
-                      <span className={Math.abs(plano.soma_antes - 100) > 0.5 ? "text-red-400" : "text-stone-400"}>{plano.soma_antes.toFixed(0)}%</span>
+                      <span className={Math.abs(plano.soma_antes - 100) > 0.5 ? "text-red-600" : "text-stone-400"}>{plano.soma_antes.toFixed(0)}%</span>
                       <span className="text-stone-600 mx-1">→</span>
-                      <span className={Math.abs(plano.soma_depois - 100) > 0.5 ? "text-red-400" : "text-emerald-400"}>{plano.soma_depois}%</span>
+                      <span className={Math.abs(plano.soma_depois - 100) > 0.5 ? "text-red-600" : "text-emerald-600"}>{plano.soma_depois}%</span>
                     </span>
                   </div>
                 </div>
-                <div className="grid grid-cols-12 px-4 py-2 bg-stone-900/50 border-b border-stone-800/60 text-[10px] uppercase tracking-[0.15em] text-stone-500">
+                <div className="grid grid-cols-12 px-4 py-2 bg-bone/70 border-b border-stone-200/80 text-[10px] uppercase tracking-[0.15em] text-stone-500">
                   <div className="col-span-5">Cliente</div>
                   <div className="col-span-2 text-right">Passo</div>
                   <div className="col-span-2 text-right">Alvo LP</div>
                   <div className="col-span-2 text-right">Δ</div>
                   <div className="col-span-1 text-right">Meses</div>
                 </div>
-                <div className="divide-y divide-stone-800/60">
+                <div className="divide-y divide-stone-200/60">
                   {plano.acoes.map((a, i) => (
                     <div key={i} className="grid grid-cols-12 items-center px-4 py-2 text-xs">
                       <div className="col-span-5 min-w-0">
-                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-300 hover:text-amber-300 truncate block">{a.cliente.nome}</button>
+                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-600 hover:text-sun-600 truncate block">{a.cliente.nome}</button>
                         <div className="flex items-center gap-2 text-[10px] text-stone-600 font-mono mt-0.5">
                           <span>{a.cliente.uc}</span>
                           <span style={{ color: a.cliente.status.cor }}>· {a.cliente.status.label}</span>
-                          {a.cliente.travamentoSuspeito && <span className="text-amber-500">⚠ travado?</span>}
+                          {a.cliente.travamentoSuspeito && <span className="text-sun-500">⚠ travado?</span>}
                         </div>
                       </div>
                       <div className="col-span-2 text-right font-mono">
                         <span className="text-stone-500">{a.de}%</span>
                         <span className="text-stone-600 mx-1">→</span>
-                        <span className="text-amber-300">{a.para}%</span>
+                        <span className="text-sun-600">{a.para}%</span>
                       </div>
                       <div className="col-span-2 text-right font-mono text-stone-500">
                         {a.pctAlvoLongoPrazo !== undefined ? `${a.pctAlvoLongoPrazo}%` : "—"}
@@ -729,7 +823,7 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
       </div>
 
       {sinalizacoes.length > 0 && (
-        <div className="border border-stone-800 p-6 bg-stone-900/30">
+        <div className="border border-stone-200 p-6 bg-bone/50">
           <div className="flex items-baseline justify-between mb-5">
             <div>
               <h3 className="text-sm uppercase tracking-[0.2em] text-stone-400">Sinalizações</h3>
@@ -740,13 +834,14 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
           <div className="space-y-2">
             {sinalizacoes.map((s, i) => {
               const cores = {
-                "travado": { borda: "border-stone-700", icon: "🔒", cor: "text-stone-400" },
-                "fixa-orientada": { borda: "border-amber-500/30", icon: "📌", cor: "text-amber-300" },
-                "requer-revisao-manual": { borda: "border-purple-500/30", icon: "⚠", cor: "text-purple-300" },
+                "travado": { borda: "border-stone-300", icon: "🔒", cor: "text-stone-400" },
+                "parado": { borda: "border-stone-400", icon: "⏸", cor: "text-stone-600" },
+                "fixa-orientada": { borda: "border-sun-400/50", icon: "📌", cor: "text-sun-600" },
+                "requer-revisao-manual": { borda: "border-purple-300", icon: "⚠", cor: "text-purple-700" },
               };
               const c = cores[s.tipo] || cores["travado"];
               return (
-                <div key={i} className={`border ${c.borda} bg-stone-950 p-3`}>
+                <div key={i} className={`border ${c.borda} bg-cream p-3`}>
                   <div className="flex items-start gap-3">
                     <div className={`w-6 h-6 flex items-center justify-center shrink-0 ${c.cor}`}>{c.icon}</div>
                     <div className="flex-1 min-w-0">
@@ -774,9 +869,17 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
 
 // ─── TelaComparativo ─────────────────────────────────────────
 function corCarregamento(car) {
-  if (car < 85) return "#f59e0b";
-  if (car > 105) return "#dc2626";
-  return "#10b981";
+  if (car < 85) return "#b45309";
+  if (car > 105) return "#b91c1c";
+  return "#059669";
+}
+
+// Estado de carregamento da UG (faixa-alvo 95–105%). Carregamento é o objetivo
+// real do otimizador — soma=100% é só restrição regulatória.
+function estadoCarregamento(car) {
+  if (car < 95)  return { label: "Subcarregada",   cor: "#b45309" };
+  if (car > 105) return { label: "Sobrecarregada", cor: "#b91c1c" };
+  return { label: "Equilibrada", cor: "#059669" };
 }
 
 const ORDEM_ESTADO = { ajustado: 0, entrando: 1, saindo: 2, mantido: 3 };
@@ -785,11 +888,11 @@ function BarraComparativa({ pct, maxPct, cor, fantasma }) {
   const larg = maxPct > 0 ? (pct / maxPct) * 100 : 0;
   if (fantasma) {
     return (
-      <div className="h-2 bg-stone-900 relative overflow-hidden border border-dashed border-stone-700" />
+      <div className="h-2 bg-bone relative overflow-hidden border border-dashed border-stone-300" />
     );
   }
   return (
-    <div className="h-2 bg-stone-800 relative overflow-hidden">
+    <div className="h-2 bg-stone-200 relative overflow-hidden">
       <div className="absolute inset-y-0 left-0" style={{ width: `${Math.max(larg, pct > 0 ? 1 : 0)}%`, backgroundColor: cor }} />
     </div>
   );
@@ -798,38 +901,40 @@ function BarraComparativa({ pct, maxPct, cor, fantasma }) {
 // Formata a projeção de horizonte (output de projetarHorizonte) em texto + cor.
 function formatarProjecao(proj) {
   if (!proj) return null;
-  if (proj.tipo === "estavel") return { label: "estável (sem problema previsto)", cor: "#10b981" };
-  if (proj.tipo === "ja_critico")   return { label: "já em crítico hoje",   cor: "#dc2626" };
-  if (proj.tipo === "ja_excessivo") return { label: "já em excessivo hoje", cor: "#7c3aed" };
+  if (proj.tipo === "estavel") return { label: "estável (sem problema previsto)", cor: "#059669" };
+  if (proj.tipo === "ja_critico")   return { label: "já em crítico hoje",   cor: "#b91c1c" };
+  if (proj.tipo === "ja_excessivo") return { label: "já em excessivo hoje", cor: "#6d28d9" };
   const m = proj.meses;
   const mStr = m < 1 ? "<1m" : m < 10 ? `${m.toFixed(1)}m` : `${Math.round(m)}m`;
   const destino = proj.tipo === "ate_critico" ? "crítico" : "excessivo";
-  const cor = m < 6 ? "#dc2626"
-            : m < 12 ? "#f59e0b"
-            : m < 24 ? "#3b82f6"
-            : "#10b981";
+  const cor = m < 6 ? "#b91c1c"
+            : m < 12 ? "#b45309"
+            : m < 24 ? "#1d4ed8"
+            : "#059669";
   return { label: `~${mStr} até ${destino}`, cor };
 }
 
 function formatarPulmao(meses) {
   if (meses == null) return null;
-  if (meses < 0.5) return { label: `${meses.toFixed(1)}m pulmão`, cor: "#dc2626" };
-  if (meses < 1.5) return { label: `${meses.toFixed(1)}m pulmão`, cor: "#f59e0b" };
-  if (meses <= 3)  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#10b981" };
-  if (meses <= 6)  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#3b82f6" };
-  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#7c3aed" };
+  if (meses < 0.5) return { label: `${meses.toFixed(1)}m pulmão`, cor: "#b91c1c" };
+  if (meses < 1.5) return { label: `${meses.toFixed(1)}m pulmão`, cor: "#b45309" };
+  if (meses <= 3)  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#059669" };
+  if (meses <= 6)  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#1d4ed8" };
+  return { label: `${meses.toFixed(1)}m pulmão`, cor: "#6d28d9" };
 }
 
-function LinhaComparativa({ linha, maxPct, onClickCliente }) {
+function LinhaComparativa({ linha, maxPct, onClickCliente, editavel = false, onMudarPct }) {
   const { cliente, rateioAtual, rateioProposto, estado, origem, destino, origemMudanca, cmc, pulmaoAtualMeses, projecao } = linha;
+  const podeEditar = editavel && estado !== "saindo" && !cliente.ehUCGeradora;
+  const editadoManualmente = origemMudanca === "manual";
   const delta = rateioProposto - rateioAtual;
   const ehGeradora = cliente.ehUCGeradora;
 
   const corEstado = {
-    mantido: "#a8a29e",
-    ajustado: "#f59e0b",
-    entrando: "#10b981",
-    saindo: "#dc2626",
+    mantido: "#6b6357",
+    ajustado: "#b45309",
+    entrando: "#059669",
+    saindo: "#b91c1c",
   }[estado];
 
   const iconeEstado = {
@@ -839,21 +944,21 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
     saindo: "←",
   }[estado];
 
-  const corBarraAtual = ehGeradora ? "#a8a29e" : (cliente.status?.cor || "#a8a29e");
-  const corBarraProposta = estado === "ajustado" ? "#f59e0b"
-    : estado === "entrando" ? "#10b981"
+  const corBarraAtual = ehGeradora ? "#6b6357" : (cliente.status?.cor || "#6b6357");
+  const corBarraProposta = estado === "ajustado" ? "#b45309"
+    : estado === "entrando" ? "#059669"
     : corBarraAtual;
 
   const pulmaoFmt = !ehGeradora ? formatarPulmao(pulmaoAtualMeses) : null;
   const projFmt = formatarProjecao(projecao);
 
   return (
-    <div className="grid grid-cols-[1fr_24px_1fr] gap-3 items-center py-2.5 px-2 hover:bg-stone-800/30 transition-colors border-b border-stone-800/40">
+    <div className="grid grid-cols-[1fr_24px_1fr] gap-3 items-center py-2.5 px-2 hover:bg-stone-200/40 transition-colors border-b border-stone-200/60">
       {/* lado ATUAL */}
       <div className="min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          {ehGeradora && <span className="text-[9px] px-1 py-px bg-amber-900/40 text-amber-300 border border-amber-700 uppercase">ger.</span>}
-          <button onClick={() => onClickCliente(cliente)} className="text-xs text-stone-300 hover:text-amber-300 truncate text-left">{cliente.nome}</button>
+          {ehGeradora && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">ger.</span>}
+          <button onClick={() => onClickCliente(cliente)} className="text-xs text-stone-600 hover:text-sun-600 truncate text-left">{cliente.nome}</button>
         </div>
         <div className="flex items-center gap-2 mb-1">
           <div className="flex-1">
@@ -864,7 +969,7 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
         {/* Metadados do cliente: CMC + pulmão atual */}
         {!ehGeradora && (
           <div className="flex items-center gap-2 text-[10px] font-mono pl-px">
-            <span className="text-stone-500">CMC <span className="text-stone-300">{cmc.toFixed(0)}</span></span>
+            <span className="text-stone-500">CMC <span className="text-stone-600">{cmc.toFixed(0)}</span></span>
             {pulmaoFmt && (
               <>
                 <span className="text-stone-700">·</span>
@@ -904,12 +1009,28 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
           <div className="flex-1">
             <BarraComparativa pct={rateioProposto} maxPct={maxPct} cor={corBarraProposta} fantasma={estado === "saindo"} />
           </div>
-          <span className="font-mono text-xs w-10 text-right" style={{ color: corEstado }}>{rateioProposto}%</span>
+          {podeEditar ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={rateioProposto}
+                onChange={e => onMudarPct?.(cliente.uc, e.target.value)}
+                className={`font-mono text-xs w-12 text-right px-1 py-0.5 border bg-cream outline-none focus:border-sun-500 ${editadoManualmente ? "border-sun-500 text-sun-600" : "border-stone-300 text-ink"}`}
+                aria-label={`Rateio proposto de ${cliente.nome}`}
+              />
+              <span className="text-xs text-stone-500">%</span>
+            </div>
+          ) : (
+            <span className="font-mono text-xs w-10 text-right" style={{ color: corEstado }}>{rateioProposto}%</span>
+          )}
         </div>
         {/* Projeção: quanto tempo a nova % aguenta */}
         <div className="text-[10px] font-mono pl-px">
           {estado === "saindo" ? (
-            <span className="text-stone-500">projeção será recalculada em <span className="text-stone-300">{destino}</span></span>
+            <span className="text-stone-500">projeção será recalculada em <span className="text-stone-600">{destino}</span></span>
           ) : ehGeradora ? (
             <span className="text-stone-500">—</span>
           ) : projFmt ? (
@@ -925,10 +1046,10 @@ function LinhaComparativa({ linha, maxPct, onClickCliente }) {
 
 function ColunaMetricas({ titulo, soma, carregamento, demanda, nClientes, deltaClientes, capacidade, destacar }) {
   const corCar = corCarregamento(carregamento);
-  const corSoma = Math.abs(soma - 100) < 0.5 ? "#10b981" : Math.abs(soma - 100) < 5 ? "#f59e0b" : "#dc2626";
+  const corSoma = Math.abs(soma - 100) < 0.5 ? "#059669" : Math.abs(soma - 100) < 5 ? "#b45309" : "#b91c1c";
   return (
-    <div className={`border ${destacar ? "border-amber-900/50 bg-amber-950/10" : "border-stone-800 bg-stone-900/40"} p-4`}>
-      <div className="text-[10px] uppercase tracking-[0.2em] mb-3" style={{ color: destacar ? "#f59e0b" : "#a8a29e" }}>{titulo}</div>
+    <div className={`border ${destacar ? "border-sun-300 bg-sun-100/40" : "border-stone-200 bg-bone/60"} p-4`}>
+      <div className="text-[10px] uppercase tracking-[0.2em] mb-3" style={{ color: destacar ? "#b45309" : "#6b6357" }}>{titulo}</div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Soma rateio</div>
@@ -940,15 +1061,15 @@ function ColunaMetricas({ titulo, soma, carregamento, demanda, nClientes, deltaC
         </div>
         <div>
           <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Demanda kWh</div>
-          <div className="text-lg font-mono text-stone-200">{demanda.toFixed(0)}</div>
+          <div className="text-lg font-mono text-stone-800">{demanda.toFixed(0)}</div>
           <div className="text-[10px] text-stone-600">de {capacidade.toFixed(0)} cap.</div>
         </div>
         <div>
           <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Nº clientes</div>
-          <div className="text-lg font-mono text-stone-200">
+          <div className="text-lg font-mono text-stone-800">
             {nClientes}
             {deltaClientes !== undefined && deltaClientes !== 0 && (
-              <span className="text-xs ml-1.5" style={{ color: deltaClientes > 0 ? "#10b981" : "#dc2626" }}>
+              <span className="text-xs ml-1.5" style={{ color: deltaClientes > 0 ? "#059669" : "#b91c1c" }}>
                 ({deltaClientes > 0 ? "+" : ""}{deltaClientes})
               </span>
             )}
@@ -960,11 +1081,11 @@ function ColunaMetricas({ titulo, soma, carregamento, demanda, nClientes, deltaC
 }
 
 const NIVEIS_STATUS = [
-  ["critico",   "Crítico",   "#dc2626"],
-  ["baixo",     "Baixo",     "#f59e0b"],
-  ["ideal",     "Ideal",     "#10b981"],
-  ["alto",      "Alto",      "#3b82f6"],
-  ["excessivo", "Excessivo", "#7c3aed"],
+  ["critico",   "Crítico",   "#b91c1c"],
+  ["baixo",     "Baixo",     "#b45309"],
+  ["ideal",     "Ideal",     "#059669"],
+  ["alto",      "Alto",      "#1d4ed8"],
+  ["excessivo", "Excessivo", "#6d28d9"],
 ];
 
 function CaixaDistribuicao({ dist, destacar, comparacao }) {
@@ -974,13 +1095,13 @@ function CaixaDistribuicao({ dist, destacar, comparacao }) {
         const valor = dist[k];
         const delta = comparacao ? valor - comparacao[k] : null;
         const corDelta = delta == null ? null
-          : delta > 0 ? (k === "critico" || k === "excessivo" ? "#dc2626" : "#10b981")
-          : delta < 0 ? (k === "critico" || k === "excessivo" ? "#10b981" : "#a8a29e")
+          : delta > 0 ? (k === "critico" || k === "excessivo" ? "#b91c1c" : "#059669")
+          : delta < 0 ? (k === "critico" || k === "excessivo" ? "#059669" : "#6b6357")
           : null;
         return (
-          <div key={k} className={`border ${destacar ? "border-amber-900/30" : "border-stone-800"} bg-stone-950 px-2 py-2 text-center`}>
-            <div className="h-1 mb-1.5 mx-auto" style={{ backgroundColor: valor > 0 ? cor : "#292524", width: "60%" }} />
-            <div className="text-xl font-mono" style={{ color: valor > 0 ? cor : "#57534e" }}>{valor}</div>
+          <div key={k} className={`border ${destacar ? "border-sun-200" : "border-stone-200"} bg-cream px-2 py-2 text-center`}>
+            <div className="h-1 mb-1.5 mx-auto" style={{ backgroundColor: valor > 0 ? cor : "#e2dbcc", width: "60%" }} />
+            <div className="text-xl font-mono" style={{ color: valor > 0 ? cor : "#a89e89" }}>{valor}</div>
             <div className="text-[9px] uppercase tracking-wider text-stone-500">{lbl}</div>
             {delta !== null && delta !== 0 && (
               <div className="text-[9px] mt-0.5 font-mono" style={{ color: corDelta }}>
@@ -998,7 +1119,7 @@ function PainelDistribuicao({ analise }) {
   const { distAtual, distProposta, pulmaoAtual, pulmaoProposto, horizonte } = analise;
   const dPulmao = pulmaoProposto - pulmaoAtual;
   return (
-    <div className="border border-stone-800 bg-stone-900/30 p-5 mb-6">
+    <div className="border border-stone-200 bg-bone/50 p-5 mb-6">
       <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
         <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400">Distribuição de Saúde do Portfólio</h3>
         <p className="text-[10px] text-stone-600">cenário proposto projeta saldo {horizonte}m à frente com o novo rateio</p>
@@ -1008,17 +1129,17 @@ function PainelDistribuicao({ analise }) {
           <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-2">Atual (hoje)</div>
           <CaixaDistribuicao dist={distAtual} />
           <div className="mt-2.5 text-[11px] text-stone-500">
-            Pulmão coletivo da UG: <span className="font-mono text-stone-300">{pulmaoAtual.toFixed(1)}m</span>
+            Pulmão coletivo da UG: <span className="font-mono text-stone-600">{pulmaoAtual.toFixed(1)}m</span>
           </div>
         </div>
         <div className="text-stone-600 text-2xl font-mono text-center pt-8 hidden md:block">→</div>
         <div>
-          <div className="text-[10px] uppercase tracking-[0.18em] text-amber-400/80 mb-2">Projetado em {horizonte}m</div>
+          <div className="text-[10px] uppercase tracking-[0.18em] text-sun-500/80 mb-2">Projetado em {horizonte}m</div>
           <CaixaDistribuicao dist={distProposta} destacar comparacao={distAtual} />
           <div className="mt-2.5 text-[11px] text-stone-500">
-            Pulmão coletivo da UG: <span className="font-mono text-stone-300">{pulmaoProposto.toFixed(1)}m</span>
+            Pulmão coletivo da UG: <span className="font-mono text-stone-600">{pulmaoProposto.toFixed(1)}m</span>
             {Math.abs(dPulmao) >= 0.1 && (
-              <span className="ml-1.5 font-mono" style={{ color: dPulmao > 0 ? "#10b981" : "#f59e0b" }}>
+              <span className="ml-1.5 font-mono" style={{ color: dPulmao > 0 ? "#059669" : "#b45309" }}>
                 ({dPulmao > 0 ? "+" : ""}{dPulmao.toFixed(1)})
               </span>
             )}
@@ -1032,20 +1153,20 @@ function PainelDistribuicao({ analise }) {
 function PainelRiscos({ riscos, horizonte, onClickCliente }) {
   if (!riscos.length) {
     return (
-      <div className="mt-6 border border-emerald-900/40 bg-emerald-950/20 px-5 py-4">
+      <div className="mt-6 border border-emerald-300 bg-emerald-950/20 px-5 py-4">
         <div className="flex items-center gap-3">
           <div className="w-2 h-2 rounded-full bg-emerald-500" />
-          <p className="text-sm text-emerald-300">Sem riscos remanescentes — em {horizonte} meses a UG fica equilibrada e todos os clientes saudáveis.</p>
+          <p className="text-sm text-emerald-700">Sem riscos remanescentes — em {horizonte} meses a UG fica equilibrada e todos os clientes saudáveis.</p>
         </div>
       </div>
     );
   }
   const cores = {
-    alta:  { borda: "border-red-900/60 bg-red-950/15",     icon: "text-red-400",   label: "text-red-300"   },
-    media: { borda: "border-amber-900/60 bg-amber-950/15", icon: "text-amber-400", label: "text-amber-300" },
+    alta:  { borda: "border-red-300 bg-red-50",     icon: "text-red-600",   label: "text-red-700"   },
+    media: { borda: "border-sun-300 bg-sun-100/60", icon: "text-sun-500", label: "text-sun-600" },
   };
   return (
-    <div className="mt-6 border border-stone-800 bg-stone-900/30 p-5">
+    <div className="mt-6 border border-stone-200 bg-bone/50 p-5">
       <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
         <h3 className="text-xs uppercase tracking-[0.2em] text-stone-400">Riscos Remanescentes</h3>
         <p className="text-[10px] text-stone-600">o que continua problemático em {horizonte}m mesmo após aplicar tudo</p>
@@ -1078,11 +1199,22 @@ function PainelRiscos({ riscos, horizonte, onClickCliente }) {
 
 function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, onAbrirFormulario }) {
   const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
+  // overrides: { [uc]: pctEditado }. null quando NÃO em modo edição.
+  const [overrides, setOverrides] = useState(null);
+  const editando = overrides !== null;
   const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
 
+  // Sempre que mudar de UG, sai do modo edição (evita carregar overrides de outra UG)
+  const mudarUG = (novoNome) => { setOverrides(null); setUgNome(novoNome); };
+
   const cenario = useMemo(
-    () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
-    [ug, planoGlobal]
+    () => {
+      if (!ug) return null;
+      return editando
+        ? construirCenarioComOverrides(ug, planoGlobal, overrides, { renormalizar: false })
+        : construirCenarioProposto(ug, planoGlobal);
+    },
+    [ug, planoGlobal, editando, overrides]
   );
   const analise = useMemo(
     () => (cenario ? analisarCenario(cenario, 6) : null),
@@ -1094,6 +1226,58 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
   }
 
   const { linhas, metricas } = cenario;
+  const somaDesviada = Math.abs(metricas.somaProposta - 100) >= 1;
+
+  // ─── Headline de carregamento (objetivo real) ───────────────────
+  const estadoProp = estadoCarregamento(metricas.carregamentoProposto);
+  const clientesPropostos = linhas.filter(l => l.estado !== "saindo").map(l => l.cliente);
+  const denomProp = capacidadeEfetivaUG(ug, clientesPropostos);
+  const gapKwh = denomProp - metricas.demandaProposta; // >0 = falta demanda · <0 = excesso
+  const temEntrada = linhas.some(l => l.estado === "entrando");
+  // UG estruturalmente subcarregada e sem alavanca (nenhuma órfã/swap entrando)
+  const subcarregadaSemLever = metricas.carregamentoProposto < 95 && !temEntrada;
+
+  const entrarEdicao = () => {
+    // Inicia overrides com os valores propostos atuais (do otimizador)
+    const init = {};
+    cenario.linhas.forEach(l => {
+      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) {
+        init[l.cliente.uc] = l.rateioProposto;
+      }
+    });
+    setOverrides(init);
+  };
+
+  const sairEdicao = () => setOverrides(null);
+
+  const mudarPct = (uc, valor) => {
+    const num = Math.max(0, Math.min(100, Number(valor) || 0));
+    setOverrides(prev => ({ ...(prev || {}), [uc]: num }));
+  };
+
+  const renormalizar = () => {
+    // Aplica renormalização: cria novo cenário com renormalizar:true,
+    // depois usa esses %´s como overrides "limpos".
+    const renormalizado = construirCenarioComOverrides(ug, planoGlobal, overrides, { renormalizar: true });
+    const novosOverrides = {};
+    renormalizado.linhas.forEach(l => {
+      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) {
+        novosOverrides[l.cliente.uc] = l.rateioProposto;
+      }
+    });
+    setOverrides(novosOverrides);
+  };
+
+  const resetarParaOtimizador = () => {
+    const init = {};
+    const base = construirCenarioProposto(ug, planoGlobal);
+    base.linhas.forEach(l => {
+      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) {
+        init[l.cliente.uc] = l.rateioProposto;
+      }
+    });
+    setOverrides(init);
+  };
 
   const linhasOrdenadas = useMemo(() => {
     return [...linhas].sort((a, b) => {
@@ -1120,9 +1304,9 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
     <div>
       <div className="mb-6 flex items-end justify-between flex-wrap gap-4">
         <div>
-          <h2 className="text-2xl text-stone-200 mb-1" style={{ fontFamily: "Georgia, serif" }}>Comparativo Atual vs Proposto</h2>
+          <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>Comparativo Atual vs Proposto</h2>
           <p className="text-xs text-stone-500">
-            Projeta o estado da UG após aplicar <strong className="text-stone-300">todas</strong> as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs).
+            Projeta o estado da UG após aplicar <strong className="text-stone-600">todas</strong> as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs).
           </p>
         </div>
         <div className="flex items-end gap-3">
@@ -1130,17 +1314,44 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
             <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
             <select
               value={ugNome}
-              onChange={e => setUgNome(e.target.value)}
-              className="bg-stone-900 border border-stone-700 px-4 py-2 text-sm text-stone-200 outline-none focus:border-amber-500/60 min-w-[200px]"
+              onChange={e => mudarUG(e.target.value)}
+              className="bg-bone border border-stone-300 px-4 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60 min-w-[200px]"
             >
               {ugsValidadas.map(u => (
                 <option key={u.nome} value={u.nome}>{u.nome} · {u.tipo}</option>
               ))}
             </select>
           </div>
+          {!editando ? (
+            <button
+              onClick={entrarEdicao}
+              className="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-[0.18em] border border-stone-300 text-stone-600 hover:border-sun-500/60 hover:text-sun-600 transition-colors"
+              title="Editar manualmente os %´s propostos"
+            >
+              <Edit3 size={14} />
+              Editar rateio proposto
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={resetarParaOtimizador}
+                className="flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-[0.18em] border border-stone-300 text-stone-600 hover:border-sun-500/60 hover:text-sun-600 transition-colors"
+                title="Volta aos valores propostos pelo otimizador"
+              >
+                <RotateCcw size={14} />
+                Resetar p/ otimizador
+              </button>
+              <button
+                onClick={sairEdicao}
+                className="px-3 py-2 text-xs uppercase tracking-[0.18em] border border-stone-300 text-stone-600 hover:border-stone-400 transition-colors"
+              >
+                Sair da edição
+              </button>
+            </>
+          )}
           <button
             onClick={() => onAbrirFormulario({ ug, cenario })}
-            className="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-[0.18em] border border-amber-500/60 text-amber-300 hover:bg-amber-500/10 transition-colors"
+            className="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-[0.18em] border border-sun-500/60 text-sun-600 hover:bg-sun-100 transition-colors"
             title="Gera o formulário oficial da Equatorial com o rateio proposto pré-preenchido"
           >
             <FileText size={14} />
@@ -1149,26 +1360,79 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
         </div>
       </div>
 
-      <div className="mb-6 border border-stone-800 bg-stone-900/30 p-5">
+      {editando && somaDesviada && (
+        <div className="mb-4 border border-sun-300 bg-sun-100/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <span className="text-sun-600 text-lg leading-none">⚠</span>
+            <p className="text-xs text-stone-700">
+              Soma do rateio proposto está em <span className="font-mono text-sun-600 font-bold">{metricas.somaProposta.toFixed(0)}%</span>.
+              A Equatorial exige soma exata de 100% no formulário oficial.
+            </p>
+          </div>
+          <button
+            onClick={renormalizar}
+            className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-sun-500/60 bg-sun-100 text-sun-600 hover:bg-sun-200 transition-colors"
+          >
+            Renormalizar p/ 100%
+          </button>
+        </div>
+      )}
+
+      <div className="mb-6 border border-stone-200 bg-bone/50 p-5">
         <div className="flex items-baseline justify-between mb-3 flex-wrap gap-3">
           <div>
-            <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500">UG selecionada <span className="text-amber-400/70 ml-2">{ug.tipo}</span></p>
-            <h3 className="text-3xl text-stone-100" style={{ fontFamily: "Georgia, serif" }}>{ug.nome}</h3>
+            <p className="text-[10px] uppercase tracking-[0.2em] text-stone-500">UG selecionada <span className="text-sun-500/70 ml-2">{ug.tipo}</span></p>
+            <h3 className="text-3xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>{ug.nome}</h3>
           </div>
           <div className="flex gap-4 text-[11px] uppercase tracking-[0.15em]">
             {totalMudancas === 0 ? (
-              <span className="text-emerald-400">✓ Nenhuma mudança proposta</span>
+              <span className="text-emerald-600">✓ Nenhuma mudança proposta</span>
             ) : (
               <>
-                {metricas.nAjustesInternos > 0 && <span className="text-amber-400"><span className="font-mono">{metricas.nAjustesInternos}</span> ajuste{metricas.nAjustesInternos > 1 ? "s" : ""} interno{metricas.nAjustesInternos > 1 ? "s" : ""}</span>}
-                {metricas.nEntrandoReloc > 0 && <span className="text-emerald-400"><span className="font-mono">{metricas.nEntrandoReloc}</span> entrando (realoc.)</span>}
-                {metricas.nEntrandoOrfa > 0 && <span className="text-cyan-400"><span className="font-mono">{metricas.nEntrandoOrfa}</span> órfã{metricas.nEntrandoOrfa > 1 ? "s" : ""}</span>}
-                {metricas.nSaindo > 0 && <span className="text-red-400"><span className="font-mono">{metricas.nSaindo}</span> saindo</span>}
+                {metricas.nAjustesInternos > 0 && <span className="text-sun-500"><span className="font-mono">{metricas.nAjustesInternos}</span> ajuste{metricas.nAjustesInternos > 1 ? "s" : ""} interno{metricas.nAjustesInternos > 1 ? "s" : ""}</span>}
+                {metricas.nEntrandoReloc > 0 && <span className="text-emerald-600"><span className="font-mono">{metricas.nEntrandoReloc}</span> entrando (realoc.)</span>}
+                {metricas.nEntrandoOrfa > 0 && <span className="text-cyan-600"><span className="font-mono">{metricas.nEntrandoOrfa}</span> órfã{metricas.nEntrandoOrfa > 1 ? "s" : ""}</span>}
+                {metricas.nSaindo > 0 && <span className="text-red-600"><span className="font-mono">{metricas.nSaindo}</span> saindo</span>}
               </>
             )}
           </div>
         </div>
+
+        {/* Headline de CARREGAMENTO — o objetivo real (soma=100% é só regra) */}
+        <div className="border-t border-stone-200 pt-3 flex items-center gap-4 flex-wrap">
+          <span className="text-[10px] uppercase tracking-[0.2em] px-2 py-1 border" style={{ color: estadoProp.cor, borderColor: estadoProp.cor }}>
+            {estadoProp.label}
+          </span>
+          <span className="text-sm font-mono">
+            <span className="text-stone-500 text-[10px] uppercase tracking-[0.15em] mr-1.5">Carregamento</span>
+            <span className="text-stone-500">{metricas.carregamentoAtual.toFixed(0)}%</span>
+            <span className="text-stone-400 mx-1">→</span>
+            <span style={{ color: estadoProp.cor }}>{metricas.carregamentoProposto.toFixed(0)}%</span>
+          </span>
+          {Math.abs(gapKwh) >= 1 && (
+            <span className="text-[11px] text-stone-500">
+              {gapKwh > 0
+                ? <>faltam <span className="font-mono text-stone-700">{gapKwh.toFixed(0)} kWh/mês</span> de demanda p/ 100%</>
+                : <>excesso de <span className="font-mono text-stone-700">{(-gapKwh).toFixed(0)} kWh/mês</span> de demanda sobre 100%</>}
+            </span>
+          )}
+        </div>
       </div>
+
+      {/* UG subcarregada SEM alavanca: recomendação honesta (use pulmão / nova UG) */}
+      {subcarregadaSemLever && analise && (
+        <div className="mb-6 border border-sun-300 bg-sun-100/50 px-5 py-4">
+          <div className="flex items-start gap-3">
+            <span className="text-sun-600 text-lg leading-none mt-0.5">◆</span>
+            <div className="text-xs text-stone-700 leading-relaxed">
+              <strong className="text-sun-600">Carregamento estrutural baixo ({metricas.carregamentoProposto.toFixed(0)}%).</strong>{" "}
+              Não há clientes órfãos nem UGs sobrecarregadas para realocar e socorrer esta UG.
+              Recomendação: manter, usar o pulmão coletivo (<span className="font-mono">{analise.pulmaoAtual.toFixed(1)}m</span>) como buffer
+              e priorizar a entrada de nova UG. Os ajustes de % abaixo otimizam a <strong>saúde de saldo individual</strong> — não alteram o carregamento.
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <ColunaMetricas
@@ -1193,8 +1457,8 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
 
       {analise && <PainelDistribuicao analise={analise} />}
 
-      <div className="border border-stone-800 bg-stone-900/30">
-        <div className="grid grid-cols-[1fr_24px_1fr] px-3 py-3 border-b border-stone-800 bg-stone-900 text-[10px] uppercase tracking-[0.18em] text-stone-500">
+      <div className="border border-stone-200 bg-bone/50">
+        <div className="grid grid-cols-[1fr_24px_1fr] px-3 py-3 border-b border-stone-200 bg-bone text-[10px] uppercase tracking-[0.18em] text-stone-500">
           <div>Atual — rateio por cliente</div>
           <div></div>
           <div>Proposto — após aplicar otimizador</div>
@@ -1206,18 +1470,20 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
               linha={l}
               maxPct={maxPct}
               onClickCliente={onClickCliente}
+              editavel={editando}
+              onMudarPct={mudarPct}
             />
           ))}
         </div>
-        <div className="px-4 py-3 border-t border-stone-800 bg-stone-900/60 grid grid-cols-[1fr_24px_1fr] text-xs">
+        <div className="px-4 py-3 border-t border-stone-200 bg-bone/80 grid grid-cols-[1fr_24px_1fr] text-xs">
           <div className="font-mono">
             <span className="text-stone-500 uppercase tracking-[0.15em] text-[10px] mr-2">Soma</span>
-            <span className={Math.abs(metricas.somaAtual - 100) < 0.5 ? "text-emerald-400" : "text-red-400"}>{metricas.somaAtual.toFixed(0)}%</span>
+            <span className={Math.abs(metricas.somaAtual - 100) < 0.5 ? "text-emerald-600" : "text-red-600"}>{metricas.somaAtual.toFixed(0)}%</span>
           </div>
           <div></div>
           <div className="font-mono">
             <span className="text-stone-500 uppercase tracking-[0.15em] text-[10px] mr-2">Soma</span>
-            <span className={Math.abs(metricas.somaProposta - 100) < 0.5 ? "text-emerald-400" : "text-red-400"}>{metricas.somaProposta.toFixed(0)}%</span>
+            <span className={Math.abs(metricas.somaProposta - 100) < 0.5 ? "text-emerald-600" : "text-red-600"}>{metricas.somaProposta.toFixed(0)}%</span>
             <span className="text-[10px] text-stone-500 ml-2">(renormalizado p/ regra Equatorial: soma = 100%)</span>
           </div>
         </div>
@@ -1225,43 +1491,514 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
 
       {analise && <PainelRiscos riscos={analise.riscos} horizonte={analise.horizonte} onClickCliente={onClickCliente} />}
 
-      <div className="mt-6 border border-stone-800 p-4 bg-stone-900/20">
+      <div className="mt-6 border border-stone-200 p-4 bg-bone/30">
         <h4 className="text-[10px] uppercase tracking-[0.2em] text-stone-500 mb-3">Legenda</h4>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
           <div className="flex items-center gap-2">
-            <span className="font-mono text-base" style={{ color: "#a8a29e" }}>·</span>
-            <span className="text-stone-300">Mantido</span>
+            <span className="font-mono text-base" style={{ color: "#6b6357" }}>·</span>
+            <span className="text-stone-600">Mantido</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-base" style={{ color: "#f59e0b" }}>↑↓</span>
-            <span className="text-stone-300">Ajuste interno de %</span>
+            <span className="font-mono text-base" style={{ color: "#b45309" }}>↑↓</span>
+            <span className="text-stone-600">Ajuste interno de %</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-base" style={{ color: "#10b981" }}>→</span>
-            <span className="text-stone-300">Entrando (realoc. ou órfã)</span>
+            <span className="font-mono text-base" style={{ color: "#059669" }}>→</span>
+            <span className="text-stone-600">Entrando (realoc. ou órfã)</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className="font-mono text-base" style={{ color: "#dc2626" }}>←</span>
-            <span className="text-stone-300">Saindo (realocado p/ outra UG)</span>
+            <span className="font-mono text-base" style={{ color: "#b91c1c" }}>←</span>
+            <span className="text-stone-600">Saindo (realocado p/ outra UG)</span>
           </div>
         </div>
         <p className="text-[11px] text-stone-500 mt-3 leading-relaxed">
+          <strong className="text-emerald-600">Entrando/Saindo</strong> = ações que mudam o <strong>carregamento</strong> (adicionam/removem demanda da UG). <strong className="text-sun-600">Ajuste interno (↑↓)</strong> = só <strong>saúde de saldo</strong> dos clientes — redistribui % entre quem já está na UG e <em>não altera</em> o carregamento.
+        </p>
+        <p className="text-[11px] text-stone-500 mt-2 leading-relaxed">
           % de entrantes via realocação é calculado proporcional ao CMC sobre o distribuível da UG destino (mesma lógica das órfãs). Barras tracejadas indicam ausência do cliente naquele lado da comparação.
         </p>
-        <div className="mt-3 pt-3 border-t border-stone-800 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-[11px] text-stone-500 leading-relaxed">
-          <div className="md:col-span-2 border-l-2 border-amber-700/40 pl-2 mb-1">
-            <strong className="text-amber-300">Soma rateio</strong> ≠ <strong className="text-amber-300">Carregamento</strong>. Soma é a alocação de % das UCs e <em>obrigatoriamente</em> fecha 100% (regra Equatorial). Carregamento é demanda (CMC) ÷ capacidade — pode ficar &gt; 100% se a UG estiver sobrecarregada. O cenário proposto é renormalizado para fechar 100% mesmo quando o output bruto do otimizador (convergência incremental) somaria diferente.
+        <div className="mt-3 pt-3 border-t border-stone-200 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5 text-[11px] text-stone-500 leading-relaxed">
+          <div className="md:col-span-2 border-l-2 border-sun-400/40 pl-2 mb-1">
+            <strong className="text-sun-600">Soma rateio</strong> ≠ <strong className="text-sun-600">Carregamento</strong>. Soma é a alocação de % das UCs e <em>obrigatoriamente</em> fecha 100% (regra Equatorial). Carregamento é demanda (CMC) ÷ capacidade — pode ficar &gt; 100% se a UG estiver sobrecarregada. O cenário proposto é renormalizado para fechar 100% mesmo quando o output bruto do otimizador (convergência incremental) somaria diferente.
           </div>
           <div>
-            <strong className="text-stone-300">CMC</strong>: consumo médio mensal (kWh) do cliente — média ponderada dos últimos 12 meses.
+            <strong className="text-stone-600">CMC</strong>: consumo médio mensal (kWh) do cliente — média ponderada dos últimos 12 meses.
           </div>
           <div>
-            <strong className="text-stone-300">Pulmão</strong>: saldo atual ÷ CMC = quantos meses o cliente sobreviveria sem receber novos créditos.
+            <strong className="text-stone-600">Pulmão</strong>: saldo atual ÷ CMC = quantos meses o cliente sobreviveria sem receber novos créditos.
           </div>
           <div className="md:col-span-2">
-            <strong className="text-stone-300">Projeção</strong>: com a nova alocação %, em quantos meses o saldo do cliente chega ao limiar de problema — crítico (&lt; 0,5× CMC, paga fatura cheia) ou excessivo (&gt; 6× CMC, risco de expirar em 60 meses). <em className="text-stone-400">"Estável"</em> = recebimento e consumo equilibrados.
+            <strong className="text-stone-600">Projeção</strong>: com a nova alocação %, em quantos meses o saldo do cliente chega ao limiar de problema — crítico (&lt; 0,5× CMC, paga fatura cheia) ou excessivo (&gt; 6× CMC, risco de expirar em 60 meses). <em className="text-stone-400">"Estável"</em> = recebimento e consumo equilibrados.
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── TelaSimulador ────────────────────────────────────────────
+// Simulação livre: usuário ajusta %´s de uma UG (sliders/inputs) e vê
+// comparação lado a lado com cenário Atual e Otimizado. Não persiste —
+// experimentação pura. Compartilha engine com Comparativo via
+// construirCenarioComOverrides em business.js.
+function MetricasResumo({ titulo, soma, carregamento, demanda, capacidade, nClientes, pulmao, nRiscos, destaque, dist }) {
+  const corCar = corCarregamento(carregamento);
+  const corSoma = Math.abs(soma - 100) < 0.5 ? "#059669" : Math.abs(soma - 100) < 5 ? "#b45309" : "#b91c1c";
+  const cls = destaque === "otimizado" ? "border-sun-300 bg-sun-100/40"
+            : destaque === "simulado"  ? "border-forest-300 bg-forest-50"
+            : "border-stone-200 bg-bone/60";
+  const corTitulo = destaque === "otimizado" ? "#b45309"
+                  : destaque === "simulado"  ? "#3a6650"
+                  : "#6b6357";
+  return (
+    <div className={`border ${cls} p-4`}>
+      <div className="text-[10px] uppercase tracking-[0.2em] mb-3" style={{ color: corTitulo }}>{titulo}</div>
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Soma</div>
+          <div className="text-xl font-mono" style={{ color: corSoma }}>{soma.toFixed(0)}%</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Carregamento</div>
+          <div className="text-xl font-mono" style={{ color: corCar }}>{carregamento.toFixed(0)}%</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Demanda</div>
+          <div className="text-sm font-mono text-ink">{demanda.toFixed(0)}<span className="text-stone-500 text-[10px] ml-1">/ {capacidade.toFixed(0)}</span></div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Clientes</div>
+          <div className="text-sm font-mono text-ink">{nClientes}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Pulmão</div>
+          <div className="text-sm font-mono text-ink">{pulmao != null ? `${pulmao.toFixed(1)}m` : "—"}</div>
+        </div>
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1">Riscos 6m</div>
+          <div className="text-sm font-mono" style={{ color: nRiscos === 0 ? "#059669" : nRiscos < 3 ? "#b45309" : "#b91c1c" }}>{nRiscos}</div>
+        </div>
+      </div>
+      {dist && <CaixaDistribuicao dist={dist} />}
+    </div>
+  );
+}
+
+function ControleClienteSlider({ cliente, valorAtual, valor, onChange, otimizado, ehAdicionado = false, entrandoOtimizador = false, origem, saindo = false, destino, onRemover }) {
+  const delta = valor - valorAtual;
+  const mudouVsOtimizado = otimizado != null && Math.abs(valor - otimizado) >= 1;
+  const borda = ehAdicionado || entrandoOtimizador ? "border-forest-300 bg-forest-50"
+              : saindo       ? "border-terra-500/50 bg-terra-100/40"
+              : "border-stone-200 bg-bone/60";
+  return (
+    <div className={`border p-3 ${borda}`}>
+      <div className="flex items-center justify-between gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            {ehAdicionado && (
+              <span className="text-[9px] px-1 py-px bg-forest-100 text-forest-700 border border-forest-300 uppercase shrink-0">← {origem || "outra UG"}</span>
+            )}
+            {entrandoOtimizador && (
+              <span className="text-[9px] px-1 py-px bg-forest-100 text-forest-700 border border-forest-300 uppercase shrink-0">otimizador: ← {origem || "outra UG"}</span>
+            )}
+            {saindo && (
+              <span className="text-[9px] px-1 py-px bg-terra-100 text-terra-600 border border-terra-500/50 uppercase shrink-0">otimizador: → {destino || "outra UG"}</span>
+            )}
+            <span className="text-xs text-ink truncate">{cliente.nome}</span>
+          </div>
+          <div className="text-[10px] text-stone-500 font-mono">
+            CMC {(cliente.cmcEfetivo || 0).toFixed(0)} · saldo {(cliente.saldo || 0).toFixed(0)} · <span style={{ color: cliente.status?.cor }}>{cliente.status?.label}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <input
+            type="number"
+            min="0"
+            max="100"
+            step="1"
+            value={valor}
+            onChange={e => onChange(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
+            className={`font-mono text-sm w-14 text-right px-1.5 py-1 border bg-cream outline-none focus:border-sun-500 ${mudouVsOtimizado ? "border-forest-600 text-forest-700" : "border-stone-300 text-ink"}`}
+          />
+          <span className="text-xs text-stone-500">%</span>
+          {onRemover && (
+            <button
+              onClick={onRemover}
+              className="ml-1 text-stone-400 hover:text-red-600 transition-colors"
+              title={ehAdicionado ? "Remover cliente adicionado" : "Remover cliente desta UG"}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        value={valor}
+        onChange={e => onChange(Number(e.target.value))}
+        className="w-full accent-forest-600"
+      />
+      <div className="flex justify-between text-[10px] font-mono mt-1 text-stone-500">
+        <span>{ehAdicionado ? "novo na UG" : `atual ${valorAtual}%`}</span>
+        {otimizado != null && !ehAdicionado && <span className="text-sun-600">otimiz. {Math.round(otimizado)}%</span>}
+        <span style={{ color: delta > 0 ? "#059669" : delta < 0 ? "#b91c1c" : "#6b6357" }}>
+          Δ {delta > 0 ? "+" : ""}{delta}pp
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) {
+  const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
+  const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
+
+  // Estado de simulação
+  const [overrides, setOverrides] = useState({});       // { uc: pct }
+  const [capacidadeOverride, setCapacidadeOverride] = useState(null); // kWh ou null
+  const [adicionados, setAdicionados] = useState([]);   // [clienteObj] de outras UGs
+  const [removidos, setRemovidos] = useState([]);        // [uc] removidos desta UG
+  const [ucParaAdd, setUcParaAdd] = useState("");        // seleção do dropdown
+
+  const capReal = ug?.capacidade_kwh || 0;
+
+  // Cenário Otimizado (referência)
+  const cenarioOtimizado = useMemo(
+    () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
+    [ug, planoGlobal]
+  );
+
+  // Reseta TODO o estado de simulação ao trocar de UG.
+  useEffect(() => {
+    if (!cenarioOtimizado) return;
+    const init = {};
+    cenarioOtimizado.linhas.forEach(l => {
+      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) init[l.cliente.uc] = l.rateioProposto;
+    });
+    setOverrides(init);
+    setCapacidadeOverride(null);
+    setAdicionados([]);
+    setRemovidos([]);
+    setUcParaAdd("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ugNome]);
+
+  const optsSim = useMemo(() => ({
+    overrides,
+    capacidade: capacidadeOverride,
+    adicionados,
+    removidos,
+    renormalizar: false,
+  }), [overrides, capacidadeOverride, adicionados, removidos]);
+
+  const cenarioSimulado = useMemo(
+    () => (ug ? simularCenario(ug, planoGlobal, optsSim) : null),
+    [ug, planoGlobal, optsSim]
+  );
+
+  // Cenário Atual = "se nada mudar"
+  const cenarioAtual = useMemo(() => {
+    if (!ug) return null;
+    const ov = {};
+    ug.clientes.forEach(c => { if (!c.ehUCGeradora) ov[c.uc] = c.rateio_pct || 0; });
+    return construirCenarioComOverrides(ug, planoGlobal, ov, { renormalizar: false });
+  }, [ug, planoGlobal]);
+
+  const analiseSimulada = useMemo(() => cenarioSimulado ? analisarCenario(cenarioSimulado, 6) : null, [cenarioSimulado]);
+  const analiseAtual    = useMemo(() => cenarioAtual    ? analisarCenario(cenarioAtual,    6) : null, [cenarioAtual]);
+  const analiseOtim     = useMemo(() => cenarioOtimizado ? analisarCenario(cenarioOtimizado, 6) : null, [cenarioOtimizado]);
+
+  // Clientes disponíveis para adicionar: de outras UGs ou órfãos, não-geradora,
+  // não já nesta UG e não já adicionados.
+  const ucsNaUG = useMemo(() => new Set((ug?.clientes || []).map(c => c.uc)), [ug]);
+  const disponiveisParaAdd = useMemo(() => {
+    const jaAdd = new Set(adicionados.map(c => c.uc));
+    return (clientes || [])
+      .filter(c => !c.ehUCGeradora && !ucsNaUG.has(c.uc) && !jaAdd.has(c.uc))
+      .sort((a, b) => (a.ug || "ZZZ").localeCompare(b.ug || "ZZZ") || a.nome.localeCompare(b.nome));
+  }, [clientes, ucsNaUG, adicionados]);
+
+  if (!ug || !cenarioSimulado) {
+    return <p className="text-stone-500 text-sm">Nenhuma UG carregada.</p>;
+  }
+
+  const mudarPct = (uc, valor) => setOverrides(prev => ({ ...prev, [uc]: valor }));
+
+  const resetarAtual = () => {
+    const nov = {};
+    ug.clientes.forEach(c => { if (!c.ehUCGeradora) nov[c.uc] = c.rateio_pct || 0; });
+    setOverrides(nov); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
+  };
+  const resetarOtimizado = () => {
+    const nov = {};
+    cenarioOtimizado.linhas.forEach(l => {
+      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) nov[l.cliente.uc] = l.rateioProposto;
+    });
+    setOverrides(nov); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
+  };
+  const renormalizarSimulado = () => {
+    const renorm = simularCenario(ug, planoGlobal, { ...optsSim, renormalizar: true });
+    const nov = {};
+    renorm.linhas.forEach(l => {
+      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) nov[l.cliente.uc] = l.rateioProposto;
+    });
+    setOverrides(nov);
+  };
+
+  const adicionarCliente = () => {
+    if (!ucParaAdd) return;
+    const cli = disponiveisParaAdd.find(c => c.uc === ucParaAdd);
+    if (!cli) return;
+    setAdicionados(prev => [...prev, cli]);
+    setRemovidos(prev => prev.filter(uc => uc !== cli.uc)); // caso tenha sido removido antes
+    setUcParaAdd("");
+  };
+  const removerCliente = (uc, ehAdicionado) => {
+    if (ehAdicionado) {
+      setAdicionados(prev => prev.filter(c => c.uc !== uc));
+    } else {
+      setRemovidos(prev => prev.includes(uc) ? prev : [...prev, uc]);
+    }
+    setOverrides(prev => { const n = { ...prev }; delete n[uc]; return n; });
+  };
+  const restaurarCliente = (uc) => setRemovidos(prev => prev.filter(x => x !== uc));
+
+  const ucsAdicionados = new Set(adicionados.map(c => c.uc));
+  const clientesRemovidos = ug.clientes.filter(c => removidos.includes(c.uc));
+
+  // Inclui clientes "saindo" (otimizador propõe realocar p/ fora) — devem
+  // aparecer para o usuário enxergar e decidir, não sumir da lista.
+  const clientesPraEditar = cenarioSimulado.linhas
+    .filter(l => !l.cliente.ehUCGeradora)
+    .sort((a, b) => b.rateioProposto - a.rateioProposto);
+
+  const otimizadoPorUc = {};
+  cenarioOtimizado?.linhas.forEach(l => { otimizadoPorUc[l.cliente.uc] = l.rateioProposto; });
+
+  const somaDesviada = Math.abs(cenarioSimulado.metricas.somaProposta - 100) >= 1;
+  const capSimulada = capacidadeOverride != null ? capacidadeOverride : capReal;
+  const capMudou = capacidadeOverride != null && Math.round(capacidadeOverride) !== Math.round(capReal);
+
+  return (
+    <div>
+      <div className="mb-6 flex items-end justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>Simulador "E se?"</h2>
+          <p className="text-xs text-stone-500">Experimentação livre: ajuste %´s, capacidade da UG e mova clientes entre UGs — vê o impacto na hora, sem afetar a base.</p>
+        </div>
+        <div className="flex items-end gap-3">
+          <div>
+            <label className="block text-[10px] text-stone-500 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
+            <select
+              value={ugNome}
+              onChange={e => setUgNome(e.target.value)}
+              className="bg-bone border border-stone-300 px-4 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60 min-w-[200px]"
+            >
+              {ugsValidadas.map(u => (
+                <option key={u.nome} value={u.nome}>{u.nome} · {u.tipo}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={resetarAtual}
+            className="px-3 py-2 text-xs uppercase tracking-[0.18em] border border-stone-300 text-stone-600 hover:border-stone-400 transition-colors"
+            title="Volta aos % atualmente em vigor e descarta movimentações"
+          >
+            <RotateCcw size={12} className="inline mr-1" />
+            Atual
+          </button>
+          <button
+            onClick={resetarOtimizado}
+            className="px-3 py-2 text-xs uppercase tracking-[0.18em] border border-sun-500/60 text-sun-600 hover:bg-sun-100 transition-colors"
+            title="Volta aos % propostos pelo otimizador e descarta movimentações"
+          >
+            <RotateCcw size={12} className="inline mr-1" />
+            Otimizado
+          </button>
+        </div>
+      </div>
+
+      {somaDesviada && (
+        <div className="mb-4 border border-sun-300 bg-sun-100/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <span className="text-sun-600 text-lg leading-none">⚠</span>
+            <p className="text-xs text-stone-700">
+              Soma simulada está em <span className="font-mono text-sun-600 font-bold">{cenarioSimulado.metricas.somaProposta.toFixed(0)}%</span>.
+              Renormalizar ajusta proporcionalmente para fechar 100%.
+            </p>
+          </div>
+          <button
+            onClick={renormalizarSimulado}
+            className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-sun-500/60 bg-sun-100 text-sun-600 hover:bg-sun-200 transition-colors"
+          >
+            Renormalizar p/ 100%
+          </button>
+        </div>
+      )}
+
+      {/* 3 cenários lado a lado */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        {analiseAtual && (
+          <MetricasResumo
+            titulo="ATUAL"
+            soma={cenarioAtual.metricas.somaProposta}
+            carregamento={cenarioAtual.metricas.carregamentoProposto}
+            demanda={cenarioAtual.metricas.demandaProposta}
+            capacidade={cenarioAtual.metricas.capacidade}
+            nClientes={cenarioAtual.metricas.nClientesProposto}
+            pulmao={analiseAtual.pulmaoAtual}
+            nRiscos={analiseAtual.riscos.length}
+            dist={analiseAtual.distAtual}
+          />
+        )}
+        {analiseOtim && (
+          <MetricasResumo
+            titulo="OTIMIZADO"
+            soma={cenarioOtimizado.metricas.somaProposta}
+            carregamento={cenarioOtimizado.metricas.carregamentoProposto}
+            demanda={cenarioOtimizado.metricas.demandaProposta}
+            capacidade={cenarioOtimizado.metricas.capacidade}
+            nClientes={cenarioOtimizado.metricas.nClientesProposto}
+            pulmao={analiseOtim.pulmaoProposto}
+            nRiscos={analiseOtim.riscos.length}
+            destaque="otimizado"
+            dist={analiseOtim.distProposta}
+          />
+        )}
+        {analiseSimulada && (
+          <MetricasResumo
+            titulo="SIMULADO"
+            soma={cenarioSimulado.metricas.somaProposta}
+            carregamento={cenarioSimulado.metricas.carregamentoProposto}
+            demanda={cenarioSimulado.metricas.demandaProposta}
+            capacidade={cenarioSimulado.metricas.capacidade}
+            nClientes={cenarioSimulado.metricas.nClientesProposto}
+            pulmao={analiseSimulada.pulmaoProposto}
+            nRiscos={analiseSimulada.riscos.length}
+            destaque="simulado"
+            dist={analiseSimulada.distProposta}
+          />
+        )}
+      </div>
+
+      {/* Controles de capacidade + movimentação cross-UG */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+        {/* Override de capacidade */}
+        <div className="border border-stone-200 bg-bone/30 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Zap size={14} className="text-sun-600" />
+            <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Capacidade da UG (simulada)</h3>
+          </div>
+          <div className="flex items-center gap-3 mb-2">
+            <input
+              type="range"
+              min="0"
+              max={Math.max(Math.round(capReal * 2), 1)}
+              step="50"
+              value={capSimulada}
+              onChange={e => setCapacidadeOverride(Number(e.target.value))}
+              className="flex-1 accent-sun-600"
+            />
+            <div className="flex items-center gap-1">
+              <input
+                type="number"
+                min="0"
+                step="50"
+                value={Math.round(capSimulada)}
+                onChange={e => setCapacidadeOverride(Math.max(0, Number(e.target.value) || 0))}
+                className={`font-mono text-sm w-20 text-right px-1.5 py-1 border bg-cream outline-none focus:border-sun-500 ${capMudou ? "border-sun-500 text-sun-600" : "border-stone-300 text-ink"}`}
+              />
+              <span className="text-xs text-stone-500">kWh</span>
+            </div>
+          </div>
+          <div className="flex items-center justify-between text-[10px] font-mono text-stone-500">
+            <span>real: {capReal.toFixed(0)} kWh/mês</span>
+            {capMudou && (
+              <button onClick={() => setCapacidadeOverride(null)} className="text-sun-600 hover:underline uppercase tracking-wider">
+                resetar capacidade
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Adicionar cliente de outra UG */}
+        <div className="border border-stone-200 bg-bone/30 p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Plus size={14} className="text-forest-600" />
+            <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Mover cliente para esta UG</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <select
+              value={ucParaAdd}
+              onChange={e => setUcParaAdd(e.target.value)}
+              className="flex-1 bg-cream border border-stone-300 px-2 py-1.5 text-xs text-stone-800 outline-none focus:border-forest-600 min-w-0"
+            >
+              <option value="">Selecione um cliente…</option>
+              {disponiveisParaAdd.map(c => (
+                <option key={c.uc} value={c.uc}>
+                  {c.nome} · {c.ug || "órfã"} · CMC {(c.cmcEfetivo || 0).toFixed(0)}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={adicionarCliente}
+              disabled={!ucParaAdd}
+              className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-forest-600 text-forest-700 hover:bg-forest-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Adicionar
+            </button>
+          </div>
+          {clientesRemovidos.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-stone-200">
+              <div className="text-[10px] uppercase tracking-[0.15em] text-stone-500 mb-1.5">Removidos desta UG</div>
+              <div className="flex flex-wrap gap-1.5">
+                {clientesRemovidos.map(c => (
+                  <button
+                    key={c.uc}
+                    onClick={() => restaurarCliente(c.uc)}
+                    className="text-[10px] px-2 py-0.5 border border-stone-300 text-stone-600 hover:border-forest-600 hover:text-forest-700 transition-colors"
+                    title="Clique para restaurar"
+                  >
+                    {c.nome} ↩
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Sliders / inputs */}
+      <div className="border border-stone-200 bg-bone/30 p-5">
+        <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
+          <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Controles por cliente</h3>
+          <p className="text-[10px] text-stone-500">Slider/input ajusta %. Verde = vindo de outra UG. Borda verde = editado vs. otimizado.</p>
+        </div>
+        {clientesPraEditar.length === 0 ? (
+          <p className="text-center py-6 text-stone-500 text-sm">Nenhum cliente editável nesta UG.</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {clientesPraEditar.map(l => (
+              <ControleClienteSlider
+                key={l.cliente.uc}
+                cliente={l.cliente}
+                valorAtual={l.cliente.rateio_pct || 0}
+                valor={overrides[l.cliente.uc] ?? l.rateioProposto}
+                otimizado={otimizadoPorUc[l.cliente.uc]}
+                ehAdicionado={ucsAdicionados.has(l.cliente.uc)}
+                entrandoOtimizador={l.estado === "entrando" && !ucsAdicionados.has(l.cliente.uc)}
+                origem={l.origem}
+                saindo={l.estado === "saindo"}
+                destino={l.destino}
+                onChange={(v) => mudarPct(l.cliente.uc, v)}
+                onRemover={() => removerCliente(l.cliente.uc, ucsAdicionados.has(l.cliente.uc))}
+              />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1294,20 +2031,20 @@ export default function App() {
   const handleVerUG = (nome) => { setUgSel(nome); setAba("ug_detail"); };
 
   if (loading && !data) return (
-    <div className="min-h-screen bg-stone-950 flex items-center justify-center">
+    <div className="min-h-screen bg-cream flex items-center justify-center">
       <div className="text-center">
-        <div className="w-8 h-8 border-2 border-amber-500/40 border-t-amber-500 rounded-full animate-spin mx-auto mb-4" />
+        <div className="w-8 h-8 border-2 border-sun-400/40 border-t-sun-500 rounded-full animate-spin mx-auto mb-4" />
         <p className="text-stone-400 text-sm">Carregando dados da planilha…</p>
       </div>
     </div>
   );
 
   if (error && !data) return (
-    <div className="min-h-screen bg-stone-950 flex items-center justify-center p-6">
+    <div className="min-h-screen bg-cream flex items-center justify-center p-6">
       <div className="max-w-md text-center">
-        <p className="text-red-400 text-sm mb-2">Erro ao carregar dados</p>
+        <p className="text-red-600 text-sm mb-2">Erro ao carregar dados</p>
         <p className="text-stone-500 text-xs mb-6 font-mono">{error}</p>
-        <button onClick={refresh} className="px-6 py-2 border border-amber-500/60 text-amber-300 text-sm hover:bg-amber-500/10 transition-colors">
+        <button onClick={refresh} className="px-6 py-2 border border-sun-500/60 text-sun-600 text-sm hover:bg-sun-100 transition-colors">
           Tentar novamente
         </button>
       </div>
@@ -1315,12 +2052,12 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-stone-950 text-stone-100" style={{ fontFamily: "system-ui, sans-serif" }}>
-      <header className="border-b border-stone-800 bg-stone-950/80 backdrop-blur-sm sticky top-0 z-40">
+    <div className="min-h-screen bg-cream text-ink">
+      <header className="border-b border-stone-200 bg-cream/95 backdrop-blur-sm sticky top-0 z-40 shadow-auri-sm">
         <div className="max-w-[1400px] mx-auto px-6 py-4 flex items-center justify-between gap-4 flex-wrap">
           <button onClick={() => { setAba("overview"); setUgSel(null); }} className="flex items-baseline gap-3">
-            <h1 className="text-xl tracking-tight text-stone-100" style={{ fontFamily: "Georgia, serif" }}>
-              Auri <span className="text-amber-500">·</span> Painel de Rateio
+            <h1 className="text-xl tracking-tight text-ink" style={{ fontFamily: "Fraunces, serif" }}>
+              Auri <span className="text-sun-500">·</span> Painel de Rateio
             </h1>
           </button>
           <div className="flex items-center gap-2 flex-wrap">
@@ -1332,7 +2069,7 @@ export default function App() {
             <button
               onClick={refresh}
               disabled={loading}
-              className="flex items-center gap-1.5 px-3 py-2 text-xs uppercase tracking-[0.18em] border border-stone-700 text-stone-400 hover:border-amber-500/60 hover:text-amber-300 transition-colors disabled:opacity-40"
+              className="flex items-center gap-1.5 px-3 py-2 text-xs uppercase tracking-[0.18em] border border-stone-300 text-stone-400 hover:border-sun-500/60 hover:text-sun-600 transition-colors disabled:opacity-40"
             >
               <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
               Atualizar
@@ -1343,11 +2080,14 @@ export default function App() {
             <NavBtn ativo={aba === "otimizador"} onClick={() => setAba("otimizador")}>
               Otimizador
               {planoGlobal.realocar.length > 0 && (
-                <span className="ml-1.5 text-[9px] px-1 py-px bg-amber-500/20 text-amber-400 border border-amber-500/30">{planoGlobal.realocar.length}</span>
+                <span className="ml-1.5 text-[9px] px-1 py-px bg-sun-200 text-sun-500 border border-sun-400/50">{planoGlobal.realocar.length}</span>
               )}
             </NavBtn>
             <NavBtn ativo={aba === "comparativo"} onClick={() => setAba("comparativo")}>
               Comparativo
+            </NavBtn>
+            <NavBtn ativo={aba === "simulador"} onClick={() => setAba("simulador")}>
+              Simulador
             </NavBtn>
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
           </div>
@@ -1357,10 +2097,10 @@ export default function App() {
       <main className="max-w-[1400px] mx-auto px-6 py-8">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           <StatBox label="Clientes ativos"    valor={stats.total} />
-          <StatBox label="Saldo crítico"       valor={stats.criticos}   cor="#dc2626" />
-          <StatBox label="Saldo excessivo"     valor={stats.excessivos} cor="#7c3aed" />
-          <StatBox label="Travamento anormal"  valor={stats.travados}   cor="#f59e0b" />
-          <StatBox label="Sem UG alocada"      valor={stats.semUG}      cor="#3b82f6" />
+          <StatBox label="Saldo crítico"       valor={stats.criticos}   cor="#b91c1c" />
+          <StatBox label="Saldo excessivo"     valor={stats.excessivos} cor="#6d28d9" />
+          <StatBox label="Travamento anormal"  valor={stats.travados}   cor="#b45309" />
+          <StatBox label="Sem UG alocada"      valor={stats.semUG}      cor="#1d4ed8" />
         </div>
 
         {aba === "overview" && <BannerValidacao ugs={ugsValidadas} />}
@@ -1368,7 +2108,7 @@ export default function App() {
         {aba === "overview" && (
           <div>
             <div className="mb-5 flex items-baseline justify-between">
-              <h2 className="text-2xl text-stone-200" style={{ fontFamily: "Georgia, serif" }}>Unidades Geradoras</h2>
+              <h2 className="text-2xl text-stone-800" style={{ fontFamily: "Fraunces, serif" }}>Unidades Geradoras</h2>
               <p className="text-xs text-stone-500">Clique em um card para detalhar.</p>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
@@ -1376,18 +2116,18 @@ export default function App() {
                 <CardUG key={ug.nome} ug={ug} onClick={() => handleVerUG(ug.nome)} />
               ))}
             </div>
-            <div className="border border-stone-800 p-5 bg-stone-900/30">
+            <div className="border border-stone-200 p-5 bg-bone/50">
               <h3 className="text-xs uppercase tracking-[0.2em] text-stone-500 mb-3">Legenda</h3>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
-                {[["Crítico","#dc2626","< 0,5× CMC"],["Baixo","#f59e0b","0,5–1,5× CMC"],["Ideal","#10b981","1,5–3× CMC"],["Alto","#3b82f6","3–6× CMC"],["Excessivo","#7c3aed","> 6× CMC"]].map(([n,c,d]) => (
+                {[["Crítico","#b91c1c","< 0,5× CMC"],["Baixo","#b45309","0,5–1,5× CMC"],["Ideal","#059669","1,5–3× CMC"],["Alto","#1d4ed8","3–6× CMC"],["Excessivo","#6d28d9","> 6× CMC"]].map(([n,c,d]) => (
                   <div key={n} className="flex items-start gap-2">
                     <div className="w-1.5 h-10 shrink-0" style={{ backgroundColor: c }} />
-                    <div><div className="text-stone-200">{n}</div><div className="text-stone-500">{d}</div></div>
+                    <div><div className="text-stone-800">{n}</div><div className="text-stone-500">{d}</div></div>
                   </div>
                 ))}
               </div>
-              <p className="mt-4 pt-4 border-t border-stone-800 text-[11px] text-stone-500">
-                <span className="text-amber-400">GERADORA</span> = UC física com os painéis. GD2: saldo preso. GD1: saldo fluido. CMC = consumo médio ponderado. Colchão ideal = 2× CMC.
+              <p className="mt-4 pt-4 border-t border-stone-200 text-[11px] text-stone-500">
+                <span className="text-sun-500">GERADORA</span> = UC física com os painéis. GD2: saldo preso. GD1: saldo fluido. CMC = consumo médio ponderado. Colchão ideal = 2× CMC.
               </p>
             </div>
           </div>
@@ -1411,10 +2151,19 @@ export default function App() {
           />
         )}
 
+        {aba === "simulador" && (
+          <TelaSimulador
+            ugsValidadas={ugsValidadas}
+            planoGlobal={planoGlobal}
+            clientes={clientes}
+            onClickCliente={setClienteSel}
+          />
+        )}
+
         {aba === "clientes" && (
           <div>
             <div className="mb-5">
-              <h2 className="text-2xl text-stone-200" style={{ fontFamily: "Georgia, serif" }}>Saúde dos Clientes</h2>
+              <h2 className="text-2xl text-stone-800" style={{ fontFamily: "Fraunces, serif" }}>Saúde dos Clientes</h2>
               <p className="text-xs text-stone-500 mt-1">{clientes.length} UCs carregadas.</p>
             </div>
             <TabelaClientes clientes={clientes} onClickCliente={setClienteSel} />
@@ -1422,14 +2171,21 @@ export default function App() {
         )}
       </main>
 
-      <footer className="border-t border-stone-800 mt-12 py-6">
+      <footer className="border-t border-stone-200 mt-12 py-6">
         <div className="max-w-[1400px] mx-auto px-6 text-xs text-stone-600 flex justify-between flex-wrap gap-2">
           <span>Auri Energia · Painel de Rateio v2.0</span>
           <span>{clientes.length} UCs · {UG_NOMES.length} UGs · dados via Google Sheets</span>
         </div>
       </footer>
 
-      {clienteSel && <DetalheCliente cliente={clienteSel} onClose={() => setClienteSel(null)} />}
+      {clienteSel && (
+        <DetalheCliente
+          cliente={clienteSel}
+          ugsValidadas={ugsValidadas}
+          planoGlobal={planoGlobal}
+          onClose={() => setClienteSel(null)}
+        />
+      )}
 
       {formularioRateio && (
         <FormularioRateio

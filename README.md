@@ -4,12 +4,15 @@ Dashboard operacional para gestão de rateio de créditos de energia solar distr
 
 ## Visão Geral
 
-O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV) e entrega:
+O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
 
-- **Visão por cliente** — saldo acumulado, status (Crítico / Baixo / Ideal / Alto / Excessivo), consumo histórico, rateio atual.
-- **Visão por UG** — composição do rateio, carregamento (% capacidade utilizada), validação de soma = 100%.
-- **Otimizador Global** — pipeline em 5 estágios que sugere ajustes incrementais de rateio, alocação de UCs órfãs e swaps entre UGs para rebalancear o sistema.
-- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador (ajustes internos + realocações cross-UG + órfãs), lado a lado com o estado atual. Inclui distribuição de saúde do portfólio projetada em 6 meses, pulmão coletivo, projeção por cliente, e lista de riscos remanescentes.
+- **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
+- **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%.
+- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **modo de edição manual** dos %´s (com renormalização para 100%). Botão **Gerar Formulário Equatorial** (PDF).
+- **Simulador "E se?"** — experimentação livre: sliders de % por cliente, **override de capacidade** da UG e **movimentação cross-UG** (trazer clientes de outras UGs), comparando Atual / Otimizado / Simulado em tempo real.
+- **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado).
+
+Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
 ---
 
@@ -17,39 +20,50 @@ O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV
 
 | Termo | Descrição |
 |---|---|
-| **UG** (Unidade Geradora) | Usina solar. Existem 7: Piloto, Alessandro, Daniela (GD1) e Lana, Taliton, Luz Transportes, Cercados e Telas (GD2). |
-| **UC** (Unidade Consumidora) | Unidade que recebe créditos de energia via rateio. |
-| **GD1 vs GD2** | GD1: créditos fluem livremente. GD2: créditos da UC geradora ficam travados por regulação. |
+| **UG** (Unidade Geradora) | Usina solar. 7 no total: Piloto, Alessandro, Daniela (GD1) e Lana, Taliton, Luz Transportes, Cercados e Telas (GD2). A própria UG é também uma UC (geradora). |
+| **UC** (Unidade Consumidora) | Unidade que recebe créditos via rateio. |
+| **GD1 vs GD2** | GD1: a geradora participa do rateio e seu saldo é fluido. GD2: a geradora autoconsome antes do rateio e seu saldo fica **travado** por regulação. |
 | **Rateio %** | Percentual da geração da UG alocado para cada UC. Deve somar exatamente 100% por UG. |
-| **CMC** | Consumo Médio do Cliente — média ponderada de 12 meses (últimos 6 com peso dobrado). |
-| **cmcEfetivo** | `cmc > 0 ? cmc : media_consumo` — usa histórico ou fallback da coluna F do S_C_Analitico. |
-| **colchaoIdeal** | `2 × cmcEfetivo` — saldo-alvo de longo prazo (2 meses de consumo em reserva). |
+| **CMC / cmcEfetivo** | Consumo médio (12m, últimos 6 com peso dobrado). `cmcEfetivo = cmc || media_consumo`. |
+| **colchaoIdeal** | `2 × cmcEfetivo` — saldo-alvo de longo prazo. |
 | **Saldo** | Créditos acumulados não consumidos (kWh). |
-| **Carregamento** | `demanda_total / capacidade_UG × 100%`. Faixa-alvo: 95–105%. |
-| **Pulmão** | `saldo / cmcEfetivo` — meses de reserva de um cliente ou UG. |
+| **Carregamento** | Quanto da geração distribuível está comprometida. **Type-aware** (ver abaixo). Faixa-alvo: 95–105%. |
+| **Pulmão** | `saldo / cmcEfetivo` — meses de reserva. |
+
+### Carregamento (definição type-aware) — `carregamentoUG`
+
+O objetivo central do otimizador é **carregamento ≈ 100%** (casar geração↔demanda). A `soma de rateio = 100%` é apenas restrição regulatória, não o objetivo.
+
+- **GD2:** `Σ cmcEfetivo(beneficiários servidos) ÷ distribuível`, onde `distribuível = capacidade − autoconsumo da geradora`. A geradora GD2 autoconsome antes do rateio.
+- **GD1:** `Σ cmcEfetivo(geradora + beneficiários servidos) ÷ capacidade`. A geradora GD1 participa do rateio e também consome.
+- **Regra do "servido":** um beneficiário só conta se tem **rateio > 0**. Um cliente a 0% não é servido por aquela UG (UC sem UG efetiva) — não entra no carregamento.
+
+Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG Detalhe, Otimizador, Comparativo, Simulador), eliminando divergências entre telas.
 
 ### Status de saldo
 
-| Nível | Razão saldo/CMC | Cor |
-|---|---|---|
-| Crítico | < 0,5× | Vermelho |
-| Baixo | 0,5–1,5× | Âmbar |
-| Ideal | 1,5–3× | Verde |
-| Alto | 3–6× | Azul |
-| Excessivo | > 6× | Roxo |
+| Nível | Razão saldo/CMC |
+|---|---|
+| Crítico | < 0,5× |
+| Baixo | 0,5–1,5× |
+| Ideal | 1,5–3× |
+| Alto | 3–6× |
+| Excessivo | > 6× |
 
 ---
 
 ## Fontes de Dados
 
-Todos os dados vêm de uma planilha Google Sheets publicada como CSV (configurada em `src/config.js`):
+Planilha Google Sheets publicada como CSV (configurada em `src/config.js`):
 
 | Aba | Conteúdo |
 |---|---|
 | `fatAuri` | Faturamento mensal por UC (consumo, saldo, mês) |
-| `clientes` | Cadastro de clientes (UC, nome, UG, desconto, CPF/CNPJ) |
-| `scAnalitico` | S_C_Analítico: rateio atual (col E), média de consumo (col F), histórico de saldo |
+| `clientes` | Cadastro (coluna A = UC de referência, nome, UG, desconto, CPF/CNPJ, endereço/classe) |
+| `scAnalitico` | Rateio atual (col E), média de consumo (col F), histórico de saldo |
 | `infoGerais` | Capacidade instalada e ocupação atual de cada UG |
+
+Geradoras identificadas por código de UC em `UC_GERADORA_NOVA` / `UC_GERADORA_ANTIGA` (`src/config.js`).
 
 ---
 
@@ -60,193 +74,89 @@ Google Sheets (CSV)
       │
       ▼
 src/hooks/useSheetData.js   ← fetch + parse + build + otimizar
-      │
       ├── src/utils/parsers.js       ← parse de cada CSV
-      ├── src/utils/business.js      ← buildClientes, validarRateios, otimizadorGlobal
-      └── src/config.js              ← URLs, mapeamentos UG/UC, constantes
-      │
+      ├── src/utils/business.js      ← buildClientes, validarRateios, otimizadorGlobal,
+      │                                carregamentoUG/demandaUG/capacidadeEfetivaUG,
+      │                                construirCenarioProposto, construirCenarioComOverrides,
+      │                                simularCenario, analisarCenario, projetarHorizonte
+      └── src/config.js              ← URLs, mapeamentos UG/UC, OPT_PARAMS
       ▼
-src/App.jsx                 ← UI (React + Recharts + Tailwind)
-  ├── TelaClientes
-  ├── TelaUGs
-  ├── TelaOtimizador
-  └── TelaComparativo
+src/App.jsx                 ← UI (React + Recharts + Tailwind/Auri)
+  ├── Visão Geral · UG Detalhe · Otimizador · Comparativo · Simulador · Clientes
+  └── modais: DetalheCliente (gráfico hist+projeção) · FormularioRateio (PDF Equatorial)
 ```
 
 ---
 
 ## Otimizador Global — Pipeline em 5 Estágios
 
-O otimizador (`otimizadorGlobal` em `business.js`) roda inteiramente no cliente, sem backend. Tempo de execução típico: < 50 ms.
+`otimizadorGlobal` em `business.js`. Roda no cliente, sem backend (< 50 ms).
 
 ### Parâmetros (`OPT_PARAMS`)
 
 ```js
-PASSO_CONVERGENCIA: 1/6    // fração do gap aplicada por mês (~6 meses para convergir)
-DEAD_ZONE_PP: 2            // sugestões com |alvo − atual| < 2pp são ignoradas
-FAIXA_ALVO_MIN: 95         // carregamento mínimo aceitável de uma UG (%)
-FAIXA_ALVO_MAX: 105        // carregamento máximo aceitável de uma UG (%)
-FATOR_FOLGA_ORFA: 1.1      // folga ≥ 110% do CMC para alocação ideal de UC órfã
-SALDO_TRAVADO_MIN: 100     // saldo > 100 kWh + invariante 6m = travado
-MIN_DELTA_INCREMENTAL: 1   // movimento mínimo (pp) quando há gap acima da dead-zone
+PASSO_CONVERGENCIA: 1/6      // fração do gap aplicada por execução
+DEAD_ZONE_PP: 2             // |alvo − atual| < 2pp → sem sugestão
+FAIXA_ALVO_MIN: 95          // carregamento mínimo aceitável (%)
+FAIXA_ALVO_MAX: 105         // carregamento máximo aceitável (%)
+FATOR_FOLGA_ORFA: 1.1       // (legado — substituído pelos tiers best-fit)
+TETO_CARREGAMENTO_ORFA: 110 // acima disso, órfã não é forçada — sinaliza "aguardar nova UG"
+SALDO_TRAVADO_MIN: 100      // saldo > 100 kWh + invariante 6m = travado
+MIN_DELTA_INCREMENTAL: 1
 ```
 
 ### Estágio 0 — Diagnóstico e Classificação
 
-Cada UC é classificada em uma de 5 categorias:
+| Categoria | Critério |
+|---|---|
+| `fixa-travada` | UC geradora GD2 **ou** saldo invariante 6+ meses (não-geradora) |
+| `fixa-orientada` | Cliente novo sem CMC histórico mas com rateio > 0 |
+| `orfa` | Sem UG associada, cmcEfetivo > 0 |
+| `geradora-ativa` | UC geradora GD1 |
+| `ajustavel` | Padrão |
 
-| Categoria | Critério | Papel no otimizador |
-|---|---|---|
-| `fixa-travada` | UC geradora GD2 **ou** saldo invariante 6+ meses | Apenas sinalizar — sem ação |
-| `fixa-orientada` | Cliente novo sem CMC histórico mas com rateio_pct > 0 | Preservar % atual como orientação manual |
-| `orfa` | Sem UG associada, cmcEfetivo > 0 | Entra no Estágio 1 para alocação |
-| `geradora-ativa` | UC geradora GD1 | Rateio respeitado como fixo |
-| `ajustavel` | Padrão | Entra no Estágio 2 para ajuste incremental |
+O carregamento por UG (`diagnosticarUG`) conta apenas beneficiários com **rateio > 0** (mesma régua do `carregamentoUG`).
 
-Para cada UG calcula-se:
-- `S_fixa` = Σ% das fixas + orientadas + geradoras
-- `S_aj` = 100 − S_fixa (orçamento disponível para ajustáveis)
-- `folga` = capacidade − demanda − autoconsumo geradora
-- `carregamento` = demanda / capacidade × 100%
+### Estágio 1 — Alocação de UCs Órfãs (best-fit, 3 tiers)
 
-### Estágio 1 — Alocação de UCs Órfãs
+Processa órfãs da **maior para a menor** (First-Fit Decreasing). Para cada uma, simula o carregamento resultante em cada UG e escolhe por tier:
 
-**Política: sempre alocar** — o sistema prioriza manter o máximo de UCs ativas.
-
-1. **Passe ideal**: UG com folga ≥ 110% do CMC → alocação normal (`severidade: ok`).
-2. **Passe forçado**: sem folga ideal → escolhe a UG com maior pulmão coletivo (meses de saldo ponderado pelo CMC dos clientes ajustáveis). Calcula e exibe:
-   - Carregamento resultante da UG após alocação
-   - Pulmão coletivo da UG (meses)
-   - **Meses até saldo crítico**: `(pulmão − 0,5) / overload_frac`
-     - Ex.: pulmão 3 meses, UG a 110% → dreno de 9%/mês → ~27 meses de janela
-
-   | Severidade | Meses até crítico |
-   |---|---|
-   | ok | nenhum overload |
-   | media | ≥ 6 meses |
-   | alta | 3–6 meses |
-   | critica | < 3 meses |
+1. **Tier 1 — cabe sem sobrecarga** (resultante ≤ `FAIXA_ALVO_MAX`): encaixe mais justo, **reservando a maior UG** (geração) para clientes de grande porte futuros.
+2. **Tier 2 — sobrecarga tolerável** (≤ `TETO_CARREGAMENTO_ORFA`): menor sobrecarga, respaldada pelo pulmão coletivo (buffer temporário). Exibe meses até saldo crítico.
+3. **Tier 3 — não cabe sem estourar** (> teto): **não força**. Sinaliza `sem_capacidade` ("aguardar nova UG"), informando o melhor caso possível.
 
 ### Estágio 2 — Ajuste Interno por UG
 
-Para cada UG, sobre as UCs `ajustavel` apenas:
+Sobre UCs `ajustavel`: move cada uma 1/6 do gap até seu `rateioIdealAlvo` (drena saldo excessivo, alimenta baixo), normalizado no orçamento `S_aj`, com dead-zone de 2pp. **Não altera o carregamento** — é saúde de saldo individual.
 
-1. **Alvo de longo prazo** por UC:
-   ```
-   deltaMensal = (colchaoIdeal − saldo) / 6
-   creditoAlvo = clamp(cmcEfetivo + deltaMensal, 0, 1.5 × cmcEfetivo)
-   rateioIdealAlvo = (creditoAlvo / distribuivel) × 100
-   ```
-   Normalizado dentro do orçamento `S_aj` (não 100) — preserva fixas intocadas.
+### Estágio 3 — Swap entre 2 UGs
 
-2. **Passo de convergência** (1/6 do gap por execução):
-   ```
-   sugestao = rateioAtual + round(gap / 6)
-   ```
-   Garante pelo menos ±1pp de movimento quando gap > dead-zone.
-
-3. **Dead-zone**: `|gap| < 2pp` → sem sugestão (protege clientes estáveis).
-
-4. **Corretor de arredondamento**: corrige apenas o resíduo de arredondamento (max ±2pp). Não força a soma para S_aj em uma única execução — a convergência é gradual, evitando saltos bruscos.
-
-### Estágio 3 — Swap Único entre 2 UGs
-
-Só roda se há UGs fora da faixa 95–105% após o Estágio 2.
-
-- Algoritmo greedy: a cada iteração, testa todos os pares (UC ajustável, UG destino) e aceita o swap que mais reduz a violação total do sistema.
-- Para quando a violação total é zero ou nenhum swap melhora o sistema.
-- UGs que continuam violando após todos os swaps são marcadas como `requer_revisao_manual`.
-
-**Restrição direcional (importante):** o swap é assimétrico por design.
-
-| Papel | Critério | Motivo |
-|---|---|---|
-| Origem (perde cliente) | somente UG **sobrecarregada** (> 105%) | Remover cliente de UG subutilizada piora o problema dela |
-| Destino (recebe cliente) | somente UG **não sobrecarregada** (< 105%) | Não empilhar cliente em UG já cheia |
-
-UG subutilizada (< 95%) **só pode ser destino**, nunca origem. Sem essa restrição o algoritmo pode aceitar um swap matematicamente ótimo globalmente (reduz a soma de violações) mas operacionalmente errado — ex.: remover o único cliente de uma UG vazia para "ajudar" outra UG, deixando a original ainda mais vazia.
-
-### Aba Comparativo — Visualização Agregada das Recomendações
-
-Acima o otimizador devolve recomendações em **listas separadas** (ajustes internos, realocações, órfãs, sinalizações). A aba **Comparativo** consolida tudo isso para uma UG selecionada e mostra o cenário projetado lado a lado com o atual.
-
-#### Núcleo: `construirCenarioProposto(ug, planoGlobal)`
-
-Helper puro em `business.js`. Para cada cliente da UG, define um `estado`:
-
-| Estado | Origem | Comportamento |
-|---|---|---|
-| `mantido` | Sem mudança no `planoGlobal` | rateio_pct igual nos dois lados |
-| `ajustado` | `planoGlobal.por_ug[ug].acoes` | rateio_pct novo = `a.para` |
-| `entrando` | `realocar` (`ug_destino`) ou `alocacao_inicial` | rateio_pct calculado proporcional ao CMC sobre o `distribuivel` (mesma lógica de `alocarOrfas`) |
-| `saindo` | `realocar` (`ug_origem`) | rateio_pct proposto = 0 |
-
-Cada linha é enriquecida com `cmc`, `pulmaoAtualMeses` (= saldo / CMC) e `projecao` (output de `projetarHorizonte`, ver abaixo).
-
-#### Renormalização: soma proposta = 100% (regra Equatorial)
-
-O otimizador opera em convergência incremental (passo de 1/6 do gap) e seu output bruto pode somar ≠ 100%. Operacionalmente isso é impossível — toda geração precisa ser alocada e a planilha submetida à Equatorial **obrigatoriamente** soma 100%.
-
-A aba Comparativo transforma o output bruto em um cenário operável renormalizando os rateios após aplicar todas as recomendações:
-
-- **Fixas (preservadas):** UC geradora (rateio fixo por regulação), clientes saindo (= 0%), clientes fixa-orientada (cliente novo sem CMC histórico com rateio manual).
-- **Flexíveis (renormalizados):** todos os demais. Sofrem escala proporcional para que a soma total feche exatamente 100%.
-
-Efeito colateral honesto e exibido na UI: clientes "mantidos" pelo otimizador podem ter o % reduzido para caber no orçamento — esses aparecem como `ajustado` com a anotação **"redistrib. p/ soma=100%"**. Já clientes cujo ajuste do otimizador foi exatamente cancelado pela renormalização voltam ao estado `mantido`.
-
-**Conceito importante (não confundir):** `Soma rateio` é a alocação de % das UCs, deve **sempre** fechar 100%. `Carregamento` é demanda (CMC) ÷ capacidade da UG, pode ficar > 100% quando há sobrecarga real (mais consumo do que a UG gera). São métricas diferentes que respondem a perguntas diferentes.
-
-Métricas agregadas (atual vs proposto): soma de rateio (proposto = 100% após renorm), carregamento, demanda kWh, nº de clientes.
-
-#### `projetarHorizonte(cliente, novoRateio, distribuivel)`
-
-Estima quanto tempo a nova alocação % sobrevive até o saldo do cliente virar problema, dado o consumo médio. Retorna `{ tipo, meses }`:
-
-| Tipo | Significado |
-|---|---|
-| `estavel` | net mensal < 5% do CMC — recebimento ≈ consumo, sem problema previsto |
-| `ate_critico` | saldo drenando — meses até razão < 0,5× CMC (provável fatura cheia) |
-| `ate_excessivo` | saldo acumulando — meses até razão > 6× CMC (risco de expirar em 60 meses) |
-| `ja_critico` / `ja_excessivo` | cliente já está fora da faixa hoje, antes mesmo de aplicar |
-
-#### `analisarCenario(cenario, n = 6)`
-
-Síntese de qualidade do cenário projetado N meses à frente (padrão: 6 meses, o intervalo típico de re-execução do otimizador). Devolve três famílias de insight:
-
-1. **Distribuição de saúde do portfólio** (`distAtual`, `distProposta`): contagem de clientes em cada status (`critico`, `baixo`, `ideal`, `alto`, `excessivo`). Permite responder "este plano melhora ou apenas reorganiza o portfólio?".
-
-2. **Pulmão coletivo da UG** (`pulmaoAtual`, `pulmaoProposto`): média ponderada (pelo CMC) de meses de saldo dos clientes ajustáveis. Indica quão folgada a UG está como um todo.
-
-3. **Riscos remanescentes** (`riscos[]`): lista de problemas que persistem mesmo após aplicar tudo — carregamento fora da faixa, soma de rateio ≠ 100%, clientes que continuam em `critico` ou `excessivo` em N meses (nominalmente identificados).
-
-Implementação usa `projetarSaldoEmNMeses(cliente, novoRateio, distribuivel, n)` para calcular o saldo de cada cliente em N meses (`saldo + n × (recebido − consumido)`, com piso em zero) e então `statusSaldo` para classificar.
+Greedy: aceita o swap que mais reduz a violação total. **Direcional:** só tira cliente de UG **sobrecarregada** (> 105%); UG subutilizada só pode **receber**. UGs que seguem violando viram `requer-revisao-manual`.
 
 ### Estágio 4 — Sinalizações
 
-- 🔒 **Travado**: UC geradora GD2 ou saldo invariante → saldo prescreve, sem ação possível.
-- 📌 **Fixa-orientada**: cliente novo com orientação manual → será reavaliado com histórico.
-- ⚠ **Revisão manual**: UG ainda violando após swaps → reorganização ≥ 3 UGs necessária.
+- 🔒 **Travado (geradora GD2)** — créditos travados estruturalmente (regulação), sem volta.
+- ⏸ **Parado (sem rateio)** — cliente não-geradora com **rateio 0% + saldo travado**: consumo caiu, saldo é **recuperável** (drena quando o consumo voltar). Tratado como UC sem UG: não conta no carregamento e **não deve ser alocado** até voltar a consumir.
+- 🔒 **Saldo invariante (servido)** — travado mas com rateio > 0: conta no carregamento; recuperável.
+- 📌 **Fixa-orientada** — cliente novo com orientação manual.
+- ⚠ **Revisão manual** — UG ainda violando após swaps.
 
-### Formato de Retorno
+---
 
-```js
-{
-  por_ug: {
-    [nome]: {
-      acoes: [{ cliente, de, para, delta, pctAlvoLongoPrazo, meses, motivo }],
-      soma_antes, soma_depois, distribuivel, carregamento,
-      S_fixa, S_aj, n_fixas, n_ajustaveis
-    }
-  },
-  realocar: [{ tipo, cliente, ug_origem, ug_destino, motivo, severidade, descricao }],
-  alocacao_inicial: [{ tipo, cliente, ug_destino, pct_inicial, motivo, severidade,
-                       carregamento_resultante, pulmao_coletivo_meses, meses_ate_critico,
-                       titulo, descricao }],
-  sinalizar: [{ tipo, cliente|ug_nome, motivo, titulo, descricao }],
-  resumo: { ugs_total, ugs_balanceadas, ugs_violando,
-            total_acoes_internas, total_swaps, total_orfas, total_sinalizacoes }
-}
-```
+## Comparativo e Simulador
+
+### `construirCenarioProposto(ug, planoGlobal)`
+Helper puro: aplica as recomendações do otimizador a uma UG, define `estado` por cliente (`mantido`/`ajustado`/`entrando`/`saindo`), renormaliza a soma para 100% (regra Equatorial) e enriquece com projeção. A renormalização é uma formalidade regulatória — a UI a apresenta como nota de rodapé, com o **carregamento** em destaque.
+
+### `construirCenarioComOverrides` / `simularCenario`
+- **Comparativo (modo edição):** `construirCenarioComOverrides(ug, plano, { [uc]: pct })` — usuário edita os %´s; banner de renormalização quando soma ≠ 100%.
+- **Simulador:** `simularCenario(ug, plano, { overrides, capacidade, adicionados, removidos })` — superset que também aceita override de capacidade e movimentação cross-UG.
+
+### `analisarCenario(cenario, n=6)`
+Distribuição de saúde atual vs projetada em N meses, pulmão coletivo e riscos remanescentes. Usa `projetarHorizonte` / `projetarSaldoEmNMeses`.
+
+### Formulário Equatorial (PDF)
+`FormularioRateio.jsx` + `pdfRateioGenerator.js` (pdf-lib) geram o formulário oficial pré-preenchido a partir do cenário proposto. Titular e CNPJ fixos da Auri Energia LTDA; código da UC no formato novo. Detalhes em `docs/handoff-formulario-rateio-equatorial.md`.
 
 ---
 
@@ -255,15 +165,17 @@ Implementação usa `projetarSaldoEmNMeses(cliente, novoRateio, distribuivel, n)
 ```
 auri-dashboard/
 ├── src/
-│   ├── App.jsx              # UI completa — TelaClientes, TelaUGs, TelaOtimizador
-│   ├── config.js            # URLs das planilhas, mapeamentos UC/UG, constantes de configuração
-│   ├── hooks/
-│   │   └── useSheetData.js  # Hook principal: fetch → parse → build → otimizar
-│   └── utils/
-│       ├── business.js      # Lógica de negócio: CMC, status, buildClientes, otimizadorGlobal, construirCenarioProposto, projetarHorizonte, projetarSaldoEmNMeses, analisarCenario
-│       └── parsers.js       # Parsers CSV para cada aba da planilha
-├── .claude/
-│   └── launch.json          # Configuração de execução para Claude Code
+│   ├── App.jsx              # UI completa (5 telas + 2 modais)
+│   ├── config.js            # URLs, UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
+│   ├── hooks/useSheetData.js
+│   ├── utils/
+│   │   ├── business.js      # CMC, status, carregamento type-aware, otimizador, cenários, projeções
+│   │   ├── parsers.js       # parsers CSV
+│   │   ├── formularioRateio.js
+│   │   ├── pdfRateioGenerator.js
+│   │   └── endereco.js
+│   └── components/FormularioRateio.jsx
+├── tailwind.config.js       # preset Auri Sol & Terra (cores/fontes/sombras)
 └── README.md
 ```
 
@@ -277,51 +189,37 @@ npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
 ```
 
-Não há backend. Todos os dados são lidos diretamente das URLs de CSV do Google Sheets configuradas em `src/config.js`. Para apontar para outra planilha, altere os GIDs nas URLs de `SHEET_URLS`.
+Sem backend nem variáveis de ambiente — toda configuração em `src/config.js`.
 
 ---
 
 ## Deploy
 
-O dashboard está publicado no Vercel com deploy automático a partir do branch `main` do repositório GitHub.
+Publicado no Vercel com deploy automático a partir do branch `main`.
 
-**URL de acesso (time interno):** https://auri-dashboard-three.vercel.app
-
-### Pipeline de atualização
+**URL:** https://auri-dashboard-three.vercel.app
 
 ```
-Edição local → git commit → git push origin main
-                                    │
-                                    └─ Vercel webhook → npm run build → novo deploy (~30s)
+git commit → git push origin main → Vercel webhook → build → deploy (~30s)
 ```
-
-### Fazer uma atualização
-
-```bash
-# Editar arquivos (ex: src/config.js para nova planilha)
-git add .
-git commit -m "chore: atualizar URLs das planilhas"
-git push origin main
-# Dashboard atualizado em ~30 segundos
-```
-
-Não há variáveis de ambiente nem secrets — toda configuração está em `src/config.js`.
 
 ---
 
 ## Decisões de Design
 
-- **Sem solver LP**: o otimizador usa heurística por estágios (greedy + convergência). O problema tem ~120 variáveis, roda em < 50 ms, e os motivos textuais são interpretáveis na UI. Um solver LP/MILP pode ser reavaliado quando entrar a feature de planejamento multi-período.
-- **Convergência gradual**: ajustes de ±1/6 do gap por mês evitam choques no projeto. A planilha não precisa ser atualizada todo mês; a cada execução o otimizador retoma do estado atual.
-- **Idempotência**: aplicar a saída do otimizador como entrada e re-executar deve gerar zero ações de ajuste (exceto possíveis ±1pp de arredondamento).
-- **Alocação forçada de órfãs**: o sistema sempre aloca UCs sem UG, mesmo em UGs sobrecarregadas, e informa a janela de segurança (meses até saldo crítico) para que o operador tome ação preventiva.
-- **Swap direcional**: UGs subutilizadas nunca são origem de swap — apenas destino. Isso evita que o algoritmo greedy produza sugestões matematicamente válidas globalmente mas operacionalmente absurdas (ex.: esvaziar ainda mais uma UG já vazia para reduzir a violação total do sistema).
+- **Carregamento é o objetivo; soma=100% é restrição.** Redistribuir % não muda o carregamento (só a saúde de saldo). Carregamento só muda adicionando/removendo demanda (órfãs/swaps).
+- **Carregamento conta só rateio > 0.** Cliente a 0% = UC sem UG efetiva; não é servido pela UG.
+- **Travado ≠ travado.** Geradora GD2 = travado estrutural (regulação). Cliente comum a 0% com saldo parado = "parado" recuperável (consumo caiu) → não alocar até voltar a consumir.
+- **Órfãs por best-fit**, reservando a maior geração para clientes grandes; não força sobrecargas graves (sinaliza "aguardar nova UG").
+- **Swap direcional**: UG subutilizada nunca é origem.
+- **Sem solver LP**: heurística por estágios, interpretável e < 50 ms.
 
 ---
 
-## Evoluções Futuras (fora do MVP)
+## Mapeado para evolução futura
 
-- Planejamento multi-período com fases (estado-alvo em N meses).
-- Estágio 4 implementado: reorganizações envolvendo 3+ UGs com matching bipartido ponderado.
-- Upload de conta de energia para inferir CMC de clientes novos automaticamente.
-- Parametrização dinâmica de `OPT_PARAMS` via interface.
+- **Metodologia do CMC com histórico poluído:** quando uma UC fica muitos meses com consumo baixo/zero, a média subestima o consumo real e infla o pulmão falsamente. Rever o cálculo (ex.: ponderar por recência/atividade) para não superestimar a reserva de clientes "parados".
+- Planejamento multi-período (estado-alvo em N meses).
+- Persistência de estado (localStorage) e histórico de ajustes aplicados.
+- Contexto financeiro (receita/custo por UG).
+- Integração de escrita de volta ao Google Sheets.

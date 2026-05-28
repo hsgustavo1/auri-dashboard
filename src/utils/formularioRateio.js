@@ -1,14 +1,15 @@
-import { DADOS_FIXOS_AURI, CLASSE_POR_UG, UC_GERADORA_ANTIGA } from "../config";
+import { DADOS_FIXOS_AURI, CLASSE_POR_UG, UC_GERADORA_NOVA } from "../config";
 import { parseEndereco } from "./endereco";
 
 const UCS_POR_PAGINA = 10;
 
-// Acha o "Código da UC" oficial (numérico antigo) da UG.
-// Cliente.uc_antiga é o código que aparece nas faturas e que a Equatorial usa.
+// Acha o "Código da UC" oficial (formato novo) da UG geradora.
+// A partir de mai/2026 a Equatorial passou a usar o formato "X.XXX.XXX-XX"
+// para todas as UCs — é esse código que deve aparecer no formulário.
 function codigoUCDaGeradora(ucGeradora) {
   if (!ucGeradora) return "";
-  // Prioriza uc_antiga (formato numérico tipo "15286083" que a Equatorial reconhece).
-  return ucGeradora.uc_antiga || ucGeradora.uc || "";
+  // Prioriza uc (formato novo). Fallback para uc_antiga só se uc estiver vazio.
+  return ucGeradora.uc || ucGeradora.uc_antiga || "";
 }
 
 function dataHojeBR() {
@@ -30,13 +31,18 @@ function checkboxesAcao(linhas) {
 
 // Divide as beneficiárias (apenas % > 0, sem a UC geradora) em páginas de 10.
 // Ordena por % decrescente; em empate, nome alfabético.
+//
+// CNPJ: todas as UCs beneficiárias pertencem a subsidiárias da Auri Energia
+// LTDA — por isso o CNPJ é SEMPRE o mesmo (48.102.050/0001-06), idêntico ao
+// da titular. UC: usa o código novo (cliente.uc no formato X.XXX.XXX-XX),
+// caindo para uc_antiga só se uc estiver vazio.
 function paginarBeneficiarias(linhas) {
   const beneficiarias = linhas
     .filter(l => !l.cliente.ehUCGeradora && l.rateioProposto > 0)
     .map(l => ({
-      uc:       l.cliente.uc_antiga || l.cliente.uc || "",
+      uc:       l.cliente.uc || l.cliente.uc_antiga || "",
       nome:     l.cliente.nome || "",
-      cpf_cnpj: l.cliente.cpf_cnpj || "",
+      cpf_cnpj: DADOS_FIXOS_AURI.cnpj,
       pct:      l.rateioProposto,
     }))
     .sort((a, b) => (b.pct - a.pct) || a.nome.localeCompare(b.nome));
@@ -66,10 +72,11 @@ export function montarFormularioRateio(ug, cenario, clientes) {
     clientes.find(c => c.ehUCGeradora && c.ug === ug.nome) ||
     null;
 
-  // Código UC: prioriza mapa hardcoded (UC_GERADORA_ANTIGA reverso) → senão usa do cliente.
+  // Código UC: prioriza o código do cliente (formato novo da Equatorial).
+  // Fallback: lookup no mapa UC_GERADORA_NOVA pelo nome da UG.
   let codigoUC = codigoUCDaGeradora(ucGeradora);
   if (!codigoUC) {
-    const par = Object.entries(UC_GERADORA_ANTIGA).find(([, nome]) => nome === ug.nome);
+    const par = Object.entries(UC_GERADORA_NOVA).find(([, nome]) => nome === ug.nome);
     if (par) codigoUC = par[0];
   }
 
@@ -80,11 +87,13 @@ export function montarFormularioRateio(ug, cenario, clientes) {
     ? { endereco: enderecoRaw, cep: ucGeradora.cep, bairro: ucGeradora.bairro, cidade: ucGeradora.cidade }
     : parseEndereco(enderecoRaw);
 
+  // Titular e CPF/CNPJ são SEMPRE da Auri Energia LTDA — ela é a titular de
+  // todas as UCs Geradoras. Endereço/CEP/bairro/cidade vêm da UC específica.
   const titular = {
     codigo_uc: codigoUC,
     classe:    CLASSE_POR_UG[ug.nome] || "",
-    titular:   ucGeradora?.nome || "",
-    cpf_cnpj:  ucGeradora?.cpf_cnpj || "",
+    titular:   DADOS_FIXOS_AURI.razao_social,
+    cpf_cnpj:  DADOS_FIXOS_AURI.cnpj,
     endereco:  partes.endereco || enderecoRaw,
     cep:       ucGeradora?.cep || partes.cep,
     bairro:    ucGeradora?.bairro || partes.bairro,

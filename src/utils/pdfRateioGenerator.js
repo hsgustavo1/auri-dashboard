@@ -1,4 +1,4 @@
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 // Caminhos servidos pela pasta public/
 const TEMPLATE_URL  = "/rateio-template.pdf";
@@ -135,6 +135,26 @@ export async function gerarPdfRateio(form, opts = {}) {
     if (acaoFinal.exclusao)        drawIf(page, "X", { ...COORDS.acao_exclusao,  font: fontBold, size: FONT_SIZE_CHECK });
     if (tipoFinal.normal)          drawIf(page, "X", { ...COORDS.tipo_normal,    font: fontBold, size: FONT_SIZE_CHECK });
     if (tipoFinal.consorcio)       drawIf(page, "X", { ...COORDS.tipo_consorcio, font: fontBold, size: FONT_SIZE_CHECK });
+
+    // ─── Conserto da linha 4 do template ──────────────────────
+    // A 4ª linha (índice 3) do template RATEIO.pdf tem o sublinhado
+    // defeituoso a partir da coluna CNPJ/CPF: espessura diferente e
+    // ligeiramente desalinhado. Mascaramos o trecho ruim com branco e
+    // redesenhamos uma linha limpa. Feito ANTES do texto para que valores
+    // longos (CPF/CNPJ) fiquem por cima da máscara.
+    const yRow4  = COORDS.uc_rows_y[3];        // baseline da 4ª linha
+    const yUnder = yRow4 - 2.5;                // posição do sublinhado padrão
+    page.drawRectangle({
+      x: 258, y: yUnder - 1.5,
+      width: 320, height: 3,
+      color: rgb(1, 1, 1),                    // máscara branca
+    });
+    page.drawLine({
+      start: { x: 260, y: yUnder },
+      end:   { x: 575, y: yUnder },
+      thickness: 0.4,
+      color: rgb(0, 0, 0),
+    });
 
     // ─── Tabela de UCs (até 10 por página) ───────────────────
     const ucs = form.paginas[pageIdx] || [];
