@@ -106,11 +106,11 @@ function saldoTravadoFn(hist, n = 6, tol = 1) {
 export function statusSaldo(saldo, cmc) {
   if (cmc <= 0) return { nivel: "sem_dados", label: "Sem dados", cor: "#6b6357", razao: 0 };
   const r = saldo / cmc;
-  if (r < 0.5) return { nivel: "critico",   label: "Crítico",   cor: "#b91c1c", razao: r };
-  if (r < 1.5) return { nivel: "baixo",     label: "Baixo",     cor: "#b45309", razao: r };
-  if (r <= 3)  return { nivel: "ideal",     label: "Ideal",     cor: "#059669", razao: r };
-  if (r <= 6)  return { nivel: "alto",      label: "Alto",      cor: "#1d4ed8", razao: r };
-  return             { nivel: "excessivo", label: "Excessivo", cor: "#6d28d9", razao: r };
+  if (r < 0.5) return { nivel: "critico",   label: "Crítico",   cor: "#a8482a", razao: r };
+  if (r < 1.5) return { nivel: "baixo",     label: "Baixo",     cor: "#c98a1f", razao: r };
+  if (r <= 3)  return { nivel: "ideal",     label: "Ideal",     cor: "#2f7a52", razao: r };
+  if (r <= 6)  return { nivel: "alto",      label: "Alto",      cor: "#2f6690", razao: r };
+  return             { nivel: "excessivo", label: "Excessivo", cor: "#6d4a8c", razao: r };
 }
 
 export function buildClientes(scData, fatData, clientesBase) {
@@ -155,7 +155,7 @@ export function buildClientes(scData, fatData, clientesBase) {
     // assim um cliente "parado" não aparece com pulmão/saúde falsamente inflados.
     let status;
     if (ehUCGeradora) {
-      status = { nivel: "geradora", label: "UC Geradora", cor: "#a8a29e", razao: cmcBase > 0 ? saldo / cmcBase : 0 };
+      status = { nivel: "geradora", label: "UC Geradora", cor: "#a89e89", razao: cmcBase > 0 ? saldo / cmcBase : 0 };
     } else {
       status = statusSaldo(saldo, cmcBase);
     }

@@ -14,6 +14,16 @@ O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV
 
 Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
+Tokens de cor de status de saldo (`statusSaldo`):
+
+| Nível | Cor (hex) | Token |
+|---|---|---|
+| Crítico | `#a8482a` | terra |
+| Baixo | `#c98a1f` | sun |
+| Ideal | `#2f7a52` | forest |
+| Alto | `#2f6690` | slate-forest |
+| Excessivo | `#6d4a8c` | plum |
+
 ---
 
 ## Conceitos de Domínio
