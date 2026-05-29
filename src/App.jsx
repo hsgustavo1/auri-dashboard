@@ -177,14 +177,21 @@ function DiagramaRow({ cliente, maxPct, onClick, ehGeradora }) {
 // no mesmo valor — fornecendo "ponte visual" entre passado e futuro.
 function montarChartData(cliente, ug, planoGlobal) {
   const meses = cliente.meses || [];
+  const saldoArr = cliente.saldoArr || [];
   const N_HIST = 6;
   const N_PROJ = 6;
-  const ultimos = meses.slice(-N_HIST);
-  const offset = meses.length - ultimos.length;
+
+  // Descarta meses em aberto / "Sem Fatura" no fim da série (entram em `meses`
+  // com saldo null) para a linha do saldo conectar direto ao ponto "hoje".
+  let fim = meses.length;
+  while (fim > 0 && saldoArr[fim - 1] == null) fim--;
+  const ini = Math.max(0, fim - N_HIST);
+  const offset = ini;
+  const ultimos = meses.slice(ini, fim);
 
   const pontos = ultimos.map((m, i) => ({
     label: m.slice(0, 2),
-    saldoHist:   cliente.saldoArr?.[offset + i] ?? null,
+    saldoHist:   saldoArr[offset + i] ?? null,
     consumoHist: cliente.consumoArr?.[offset + i] ?? null,
   }));
 

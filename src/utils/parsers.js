@@ -5,9 +5,12 @@ export function parseBR(v) {
   if (v === null || v === undefined || v === "" || v === "Sem Fatura") return null;
   if (typeof v === "number") return v;
   const s = String(v).replace(/\s/g, "").replace("R$", "").replace("%", "");
-  if (s.includes(",") && s.includes(".")) return parseFloat(s.replace(/\./g, "").replace(",", "."));
-  if (s.includes(",")) return parseFloat(s.replace(",", "."));
-  return parseFloat(s) || null;
+  // NaN-check (não `|| null`) para preservar o zero: `0 || null` === null faria
+  // um saldo/consumo zerado virar buraco no gráfico em vez de um ponto em 0.
+  const num = (x) => { const n = parseFloat(x); return Number.isNaN(n) ? null : n; };
+  if (s.includes(",") && s.includes(".")) return num(s.replace(/\./g, "").replace(",", "."));
+  if (s.includes(",")) return num(s.replace(",", "."));
+  return num(s);
 }
 
 function parseCSV(text) {
