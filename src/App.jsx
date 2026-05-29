@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { RefreshCw, FileText } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
 import {
   construirCenarioProposto,
@@ -2005,6 +2005,195 @@ function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) 
 }
 
 // ─── App principal ────────────────────────────────────────────
+// ─── TelaPanorama ─────────────────────────────────────────────
+const SITUACOES_PANORAMA = [
+  { nivel: "critico",   label: "Crítico",   cor: "#a8482a" },
+  { nivel: "baixo",     label: "Baixo",     cor: "#c98a1f" },
+  { nivel: "ideal",     label: "Ideal",     cor: "#2f7a52" },
+  { nivel: "alto",      label: "Alto",      cor: "#2f6690" },
+  { nivel: "excessivo", label: "Excessivo", cor: "#6d4a8c" },
+];
+
+function TelaPanorama({ ugsValidadas, onVerUG }) {
+  const [situacaoFiltro, setSituacaoFiltro] = useState(null);
+
+  const dadosBarras = ugsValidadas.map(ug => {
+    const consumidores = ug.clientes.filter(c => !c.ehUCGeradora);
+    const row = { ug: ug.nome };
+    SITUACOES_PANORAMA.forEach(s => {
+      row[s.nivel] = consumidores.filter(c => c.status.nivel === s.nivel).length;
+    });
+    return row;
+  });
+
+  const totais = Object.fromEntries(
+    SITUACOES_PANORAMA.map(s => [
+      s.nivel,
+      dadosBarras.reduce((sum, r) => sum + (r[s.nivel] || 0), 0),
+    ])
+  );
+
+  const totalGeral = SITUACOES_PANORAMA.reduce((sum, s) => sum + totais[s.nivel], 0);
+
+  return (
+    <div>
+      <div className="mb-5">
+        <h2 className="text-2xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>
+          Panorama de Clientes
+        </h2>
+        <p className="text-xs text-stone-600 mt-1">
+          {totalGeral} UCs consumidoras · clique numa situação para destacar
+        </p>
+      </div>
+
+      {/* Cards de situação */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-8">
+        {SITUACOES_PANORAMA.map(s => {
+          const ativo = situacaoFiltro === s.nivel;
+          return (
+            <button
+              key={s.nivel}
+              onClick={() => setSituacaoFiltro(ativo ? null : s.nivel)}
+              className={`border border-stone-200 p-4 text-left transition-all bg-white shadow-auri-sm hover:shadow-auri-md rounded-md ${
+                ativo ? "ring-2 ring-offset-1" : ""
+              }`}
+              style={{
+                ...(ativo ? { "--tw-ring-color": s.cor } : {}),
+              }}
+            >
+              <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">
+                {s.label}
+              </div>
+              <div className="text-3xl font-extrabold tracking-tight" style={{ color: s.cor }}>
+                {totais[s.nivel]}
+              </div>
+              <div className="text-xs text-stone-600 mt-1">clientes</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Gráfico de barras empilhadas por UG */}
+      <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md p-5 mb-6">
+        <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-4 font-mono">
+          Distribuição por UG
+        </div>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={dadosBarras} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
+            <XAxis dataKey="ug" tick={{ fontSize: 11, fill: "#78716c" }} />
+            <YAxis tick={{ fontSize: 11, fill: "#78716c" }} allowDecimals={false} />
+            <Tooltip
+              contentStyle={{ fontSize: 12, border: "1px solid #d6d3d1", borderRadius: 0 }}
+              cursor={{ fill: "#f5f0e8" }}
+            />
+            <Legend
+              wrapperStyle={{ fontSize: 11, paddingTop: 12 }}
+              formatter={(value) =>
+                SITUACOES_PANORAMA.find(s => s.nivel === value)?.label || value
+              }
+            />
+            {SITUACOES_PANORAMA.map(s => (
+              <Bar
+                key={s.nivel}
+                dataKey={s.nivel}
+                name={s.nivel}
+                stackId="a"
+                fill={s.cor}
+                fillOpacity={situacaoFiltro && situacaoFiltro !== s.nivel ? 0.15 : 1}
+                style={{ cursor: "pointer" }}
+                onClick={(data) => onVerUG(data.ug)}
+              />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+        <p className="text-[10px] text-stone-500 mt-2">
+          Clique em uma barra para abrir o detalhe da UG
+        </p>
+      </div>
+
+      {/* Tabela resumo */}
+      <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-stone-200 bg-stone-50">
+              <th className="text-left px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-normal font-mono">
+                UG
+              </th>
+              {SITUACOES_PANORAMA.map(s => (
+                <th
+                  key={s.nivel}
+                  className="text-center px-3 py-2 text-[10px] uppercase tracking-[0.18em] font-normal font-mono"
+                  style={{
+                    color: s.cor,
+                    opacity: situacaoFiltro && situacaoFiltro !== s.nivel ? 0.3 : 1,
+                  }}
+                >
+                  {s.label}
+                </th>
+              ))}
+              <th className="text-center px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-normal font-mono">
+                Total
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {dadosBarras.map((row, i) => {
+              const total = SITUACOES_PANORAMA.reduce((sum, s) => sum + row[s.nivel], 0);
+              return (
+                <tr
+                  key={row.ug}
+                  className={`border-b border-stone-100 hover:bg-stone-50 cursor-pointer ${
+                    i % 2 === 0 ? "" : "bg-bone/40"
+                  }`}
+                  onClick={() => onVerUG(row.ug)}
+                >
+                  <td className="px-4 py-2 text-stone-700 font-mono text-xs">{row.ug}</td>
+                  {SITUACOES_PANORAMA.map(s => (
+                    <td
+                      key={s.nivel}
+                      className="text-center px-3 py-2 font-mono text-xs"
+                      style={{
+                        color: row[s.nivel] > 0 ? s.cor : "#c7bfb5",
+                        opacity: situacaoFiltro && situacaoFiltro !== s.nivel ? 0.25 : 1,
+                        fontWeight: situacaoFiltro === s.nivel && row[s.nivel] > 0 ? 600 : 400,
+                      }}
+                    >
+                      {row[s.nivel]}
+                    </td>
+                  ))}
+                  <td className="text-center px-3 py-2 font-mono text-xs text-stone-600">
+                    {total}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className="border-t-2 border-stone-200 bg-stone-50">
+              <td className="px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-mono">
+                Total
+              </td>
+              {SITUACOES_PANORAMA.map(s => (
+                <td
+                  key={s.nivel}
+                  className="text-center px-3 py-2 font-mono text-xs font-semibold"
+                  style={{
+                    color: s.cor,
+                    opacity: situacaoFiltro && situacaoFiltro !== s.nivel ? 0.25 : 1,
+                  }}
+                >
+                  {totais[s.nivel]}
+                </td>
+              ))}
+              <td className="text-center px-3 py-2 font-mono text-xs font-semibold text-stone-700">
+                {totalGeral}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { data, loading, error, refresh, lastUpdated } = useSheetData();
   const [aba, setAba] = useState("overview");
@@ -2090,6 +2279,7 @@ export default function App() {
               Simulador
             </NavBtn>
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
+            <NavBtn ativo={aba === "panorama"} onClick={() => setAba("panorama")}>Panorama</NavBtn>
           </div>
         </div>
       </header>
@@ -2168,6 +2358,10 @@ export default function App() {
             </div>
             <TabelaClientes clientes={clientes} onClickCliente={setClienteSel} />
           </div>
+        )}
+
+        {aba === "panorama" && (
+          <TelaPanorama ugsValidadas={ugsValidadas} onVerUG={handleVerUG} />
         )}
       </main>
 
