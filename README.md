@@ -4,13 +4,14 @@ Dashboard operacional para gestão de rateio de créditos de energia solar distr
 
 ## Visão Geral
 
-O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
+O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV) e entrega seis telas:
 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%.
 - **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **modo de edição manual** dos %´s (com renormalização para 100%). Botão **Gerar Formulário Equatorial** (PDF).
 - **Simulador "E se?"** — experimentação livre: sliders de % por cliente, **override de capacidade** da UG e **movimentação cross-UG** (trazer clientes de outras UGs), comparando Atual / Otimizado / Simulado em tempo real.
 - **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado).
+- **Panorama** — visão agregada: distribuição de saúde de saldo por UG (stacked bar chart), filtro por situação e totais globais.
 
 Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
@@ -187,17 +188,20 @@ Distribuição de saúde atual vs projetada em N meses, pulmão coletivo e risco
 ```
 auri-dashboard/
 ├── src/
-│   ├── App.jsx              # UI completa (5 telas + 2 modais)
+│   ├── App.jsx              # UI completa (6 telas + 2 modais)
 │   ├── config.js            # URLs, UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
 │   ├── hooks/useSheetData.js
 │   ├── utils/
-│   │   ├── business.js      # CMC, status, carregamento type-aware, otimizador, cenários, projeções
-│   │   ├── parsers.js       # parsers CSV
+│   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador, cenários, projeções
+│   │   ├── business.test.js     # 37 testes unitários de business.js (Vitest)
+│   │   ├── parsers.js           # parsers CSV
+│   │   ├── parsers.test.js      # 12 testes unitários de parsers.js (Vitest)
 │   │   ├── formularioRateio.js
 │   │   ├── pdfRateioGenerator.js
 │   │   └── endereco.js
 │   └── components/FormularioRateio.jsx
 ├── tailwind.config.js       # preset Auri Sol & Terra (cores/fontes/sombras)
+├── vite.config.js           # code-splitting: chunks react / recharts / pdf separados
 └── README.md
 ```
 
@@ -209,9 +213,24 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
+npm test           # testes unitários (Vitest) — 49 testes
+npm run test:watch # modo watch para desenvolvimento
 ```
 
 Sem backend nem variáveis de ambiente — toda configuração em `src/config.js`.
+
+### Build e chunks
+
+O bundle de produção é dividido em chunks independentes para melhor caching HTTP/2:
+
+| Chunk | Tamanho (gzip) | Conteúdo |
+|---|---|---|
+| `react` | ~61 kB | React + ReactDOM |
+| `recharts` | ~105 kB | Recharts + D3 |
+| `pdf` | ~176 kB | pdf-lib + pdfjs-dist |
+| `index` (app) | ~42 kB | Código da aplicação |
+
+Configurado em `vite.config.js` via `manualChunks` (Rolldown/Vite 8).
 
 ---
 
@@ -224,6 +243,36 @@ Publicado no Vercel com deploy automático a partir do branch `main`.
 ```
 git commit → git push origin main → Vercel webhook → build → deploy (~30s)
 ```
+
+---
+
+## Gráfico de Saldo — DetalheCliente
+
+O modal de detalhe exibe "SALDO: HISTÓRICO + PROJEÇÃO 6M" com quatro linhas:
+
+| Linha | Cor | Tipo |
+|---|---|---|
+| Saldo (real) | `#c98a1f` (sun) | sólida |
+| Consumo (real) | `#a89e89` | tracejada cinza |
+| Projeção · rateio atual | `#e8a93c` | tracejada laranja |
+| Projeção · rateio otimizado | `#3a6650` | tracejada verde |
+
+### Como `montarChartData` monta os dados (`App.jsx`)
+
+1. **Apara meses em aberto no fim da série** — `parseSCAnalitico` inclui o mês corrente ainda sem fatura (`saldo = null`). A função descarta esses `null`s finais antes de fatiar a janela de 6 meses, garantindo que a linha sólida chegue direto ao ponto "hoje" sem gap.
+2. **Ponto "hoje"** — âncora entre histórico e projeção; recebe `saldoHist = saldo atual`.
+3. **Projeção linear** — `saldo + n × ((pct/100 × distribuível) − cmc)` para n = 1..6 meses.
+4. **`connectNulls={true}`** — meses sem fatura no meio da série (dado ausente) são interpolados em vez de quebrarem a linha em segmentos soltos.
+
+### Bug corrigido: `parseBR` zero → null (`parsers.js`)
+
+`parseFloat("0") || null` retornava `null` porque `0` é falsy em JS. Qualquer saldo ou consumo igual a zero virava buraco no gráfico. Corrigido com checagem de `NaN`:
+
+```js
+const num = (x) => { const n = parseFloat(x); return Number.isNaN(n) ? null : n; };
+```
+
+Agora `"0"` → `0` (plota o ponto em zero); `""` / `"Sem Fatura"` → `null` (sem ponto).
 
 ---
 
