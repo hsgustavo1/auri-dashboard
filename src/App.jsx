@@ -288,8 +288,8 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
                     <ReferenceLine y={cliente.colchaoIdeal} stroke="#2f7a52" strokeDasharray="3 3" label={{ value: "colchão ideal", position: "insideTopRight", fill: "#2f7a52", fontSize: 10 }} />
                   )}
                   <ReferenceLine x="hoje" stroke="#6b6357" strokeDasharray="2 4" label={{ value: "hoje", position: "top", fill: "#6b6357", fontSize: 10 }} />
-                  <Line type="monotone" dataKey="saldoHist" stroke="#c98a1f" strokeWidth={2} dot={{ fill: "#c98a1f", r: 3 }} name="Saldo (real)" connectNulls={false} />
-                  <Line type="monotone" dataKey="consumoHist" stroke="#a89e89" strokeWidth={1.5} dot={false} strokeDasharray="3 3" name="Consumo (real)" connectNulls={false} />
+                  <Line type="monotone" dataKey="saldoHist" stroke="#c98a1f" strokeWidth={2} dot={{ fill: "#c98a1f", r: 3 }} name="Saldo (real)" connectNulls={true} />
+                  <Line type="monotone" dataKey="consumoHist" stroke="#a89e89" strokeWidth={1.5} dot={false} strokeDasharray="3 3" name="Consumo (real)" connectNulls={true} />
                   <Line type="monotone" dataKey="projAtual" stroke="#e8a93c" strokeWidth={2} strokeDasharray="4 4" dot={{ fill: "#e8a93c", r: 2 }} name="Projeção · rateio atual" connectNulls={false} />
                   {propMudouRateio && (
                     <Line type="monotone" dataKey="projOtimizado" stroke="#3a6650" strokeWidth={2} strokeDasharray="4 4" dot={{ fill: "#3a6650", r: 2 }} name="Projeção · rateio otimizado" connectNulls={false} />
