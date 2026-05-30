@@ -1120,6 +1120,12 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
 
   const pulmaoFmt = !ehGeradora ? formatarPulmao(pulmaoAtualMeses) : null;
   const projFmt = formatarProjecao(projecao);
+  // Projeção do lado ATUAL: quanto tempo aguenta mantendo o rateio atual.
+  // Não se aplica a "entrando" (rateioAtual = 0, cliente não está nesta UG hoje).
+  const projecaoAtualRaw = !ehGeradora && estado !== "entrando" && denom > 0
+    ? projetarHorizonte(cliente, rateioAtual, denom)
+    : null;
+  const projAtualFmt = formatarProjecao(projecaoAtualRaw);
 
   return (
     <div className="grid grid-cols-[1fr_24px_1fr] gap-3 items-center py-2.5 px-2 hover:bg-stone-200/40 transition-colors border-b border-stone-200/60">
@@ -1155,6 +1161,11 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
                 <span style={{ color: pulmaoFmt.cor }}>{pulmaoFmt.label}</span>
               </>
             )}
+          </div>
+        )}
+        {projAtualFmt && (
+          <div className="text-[10px] font-mono pl-px mt-0.5" style={{ color: projAtualFmt.cor }}>
+            {projAtualFmt.label}
           </div>
         )}
         {ehGeradora && (
