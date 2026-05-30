@@ -11,6 +11,7 @@ import {
   rateioPropostoDoCliente,
   carregamentoUG,
   capacidadeEfetivaUG,
+  projetarHorizonte,
 } from "./utils/business";
 import { Edit3, RotateCcw, Plus, X, Zap } from "lucide-react";
 import { UG_NOMES } from "./config";
@@ -140,33 +141,200 @@ function CardUG({ ug, onClick }) {
   );
 }
 
-// ─── DiagramaRow ─────────────────────────────────────────────
-function DiagramaRow({ cliente, maxPct, onClick, ehGeradora }) {
-  const larg = maxPct > 0 ? (cliente.rateio_pct / maxPct) * 100 : 0;
+// ─── DistribuicaoUnificada (Variante B — barras gêmeas) ──────
+// Unifica rateio + carregamento + saúde de saldo numa linha por cliente:
+//   • barra "recebe" = rateio %  ·  barra "consome" = CMC ÷ denominador
+//   • direção do saldo = sinal de (recebe − consome) — projetarHorizonte
+//   • status (cor) = nível do saldo hoje  ·  horizonte = evento na nomenclatura da legenda
+//   GD2: denominador = distribuível (cap − autoconsumo); geradora vira "reserva".
+//   GD1: denominador = capacidade cheia; geradora participa como linha de carga.
+const STATUS_LABEL = { critico: "Crítico", baixo: "Baixo", ideal: "Ideal", alto: "Alto", excessivo: "Excessivo" };
+const COR_RECEBE = "#8a8170";
+const TIP_PULMAO =
+  "Pulmão = saldo ÷ consumo: meses que o saldo cobriria se a geração parasse 100% (pior caso). " +
+  "Horizonte = projeção mantendo o rateio atual — o cliente continua recebendo, só o déficit líquido drena o saldo. " +
+  "Crítico = saldo abaixo de 0,5× CMC (meia mensalidade de consumo).";
+const CAP_HORIZONTE_MESES = 12; // horizonte de acúmulo além disso vira "Adequado"
+
+// Traduz o output de projetarHorizonte para texto + cor, usando a nomenclatura da legenda.
+function formatarHorizonteEvento(proj) {
+  if (!proj) return { txt: "saldo fluido", cor: "#a89e89" }; // geradora (GD1)
+  if (proj.tipo === "estavel") return { txt: "Adequado", cor: "#2f7a52" };
+  if (proj.tipo === "ja_critico") return { txt: "Crítico hoje", cor: "#a8482a" };
+  if (proj.tipo === "ja_excessivo") return { txt: "Excessivo hoje", cor: "#6d4a8c" };
+  const m = Math.round(proj.meses);
+  if (proj.tipo === "ate_critico") return { txt: `Crítico em ~${m}m`, cor: "#a8482a" };
+  // ate_excessivo: acúmulo distante não é acionável → Adequado
+  if (proj.meses > CAP_HORIZONTE_MESES) return { txt: "Adequado", cor: "#2f7a52" };
+  return { txt: `Excessivo em ~${m}m`, cor: "#6d4a8c" };
+}
+
+function LinhaUnificada({ s, scaleMax, denom, onClick }) {
+  const { cliente } = s;
+  const cor = cliente.status.cor;
+  const isGer = s.ehGeradora;
+  const net = Math.round(((s.recebe - s.consome) / 100) * denom);
+  const drena = net < -5, acum = net > 5;
+  const dirTxt = isGer ? null : drena ? `drena ↓ ${net} kWh/mês` : acum ? `acumula ↑ +${net} kWh/mês` : `equilíbrio ${net} kWh/mês`;
+  const dirCor = drena ? "#a8482a" : acum ? "#2f7a52" : "#78716c";
+  const horiz = isGer ? { txt: "saldo fluido", cor: "#a89e89" } : formatarHorizonteEvento(s.proj);
+  const chipLabel = isGer ? "Geradora" : `Saldo ${STATUS_LABEL[cliente.status.nivel] || ""}`;
+  const w = v => `${Math.min(100, (v / scaleMax) * 100)}%`;
+
   return (
-    <button onClick={onClick} className="w-full text-left grid grid-cols-[1fr_auto] gap-3 items-center hover:bg-stone-200/50 px-2 py-1.5 transition-colors">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          {ehGeradora && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">geradora</span>}
-          <span className="text-xs text-stone-600 truncate">{cliente.nome}</span>
-          {cliente.travamentoSuspeito && <span className="text-[9px] text-terra-600">⚠</span>}
-        </div>
-        <div className="h-2 bg-stone-200 relative overflow-hidden">
-          <div className="absolute inset-y-0 left-0" style={{ width: `${Math.max(larg, cliente.rateio_pct > 0 ? 1 : 0)}%`, backgroundColor: cliente.status.cor }} />
-        </div>
+    <div className="py-3.5 border-b border-stone-200 last:border-b-0">
+      <div className="flex justify-between items-baseline gap-3 mb-2">
+        <button onClick={onClick} className="text-left min-w-0 group">
+          {isGer && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase mr-2">geradora</span>}
+          <span className="text-sm text-stone-700 group-hover:text-sun-600 truncate">{cliente.nome}</span>
+          <span className="text-[10px] font-mono text-stone-400 ml-2">{cliente.uc}</span>
+        </button>
+        <span className="text-[9px] tracking-[0.1em] uppercase px-1.5 py-0.5 border rounded whitespace-nowrap" style={{ color: cor, borderColor: cor }}>{chipLabel}</span>
       </div>
-      <div className="text-right min-w-[150px]">
-        <div className="font-mono text-stone-600">{cliente.rateio_pct}%</div>
-        <div className="text-[10px] text-stone-600">
-          saldo: <span className="font-mono">{(cliente.saldo||0).toFixed(0)}</span> · cmc: <span className="font-mono">{(cliente.cmc||0).toFixed(0)}</span>
+
+      {/* barras gêmeas (mesma escala) */}
+      <div className="grid grid-cols-[58px_1fr_auto] items-center gap-2 mb-0.5">
+        <span className="text-[9px] uppercase tracking-[0.08em] text-stone-500 text-right">recebe</span>
+        <div className="h-2.5 bg-stone-200 rounded-sm relative overflow-hidden">
+          <div className="absolute inset-y-0 left-0 rounded-sm" style={{ width: w(s.recebe), backgroundColor: COR_RECEBE }} />
+        </div>
+        <span className="text-xs font-mono font-semibold w-14 text-right" style={{ color: COR_RECEBE }}>{s.recebe}%</span>
+      </div>
+      <div className="grid grid-cols-[58px_1fr_auto] items-center gap-2">
+        <span className="text-[9px] uppercase tracking-[0.08em] text-stone-500 text-right">consome</span>
+        <div className="h-2.5 bg-stone-200 rounded-sm relative overflow-hidden">
+          <div className="absolute inset-y-0 left-0 rounded-sm" style={{ width: w(s.consome), backgroundColor: cor }} />
+        </div>
+        <span className="text-xs font-mono font-semibold w-14 text-right" style={{ color: cor }}>{s.consome.toFixed(1).replace(".", ",")}%</span>
+      </div>
+
+      {/* meta: direção · pulmão (tooltip) · saldo/cmc · horizonte */}
+      <div className="flex justify-between items-center gap-3 mt-2.5 flex-wrap">
+        <div className="flex gap-4 items-center flex-wrap text-[11px] text-stone-600">
+          {dirTxt && <span className="font-medium" style={{ color: dirCor }}>{dirTxt}</span>}
           {cliente.pulmaoMeses != null && (
-            <span className="ml-1.5 font-mono" style={{ color: cliente.status.cor }}>
-              = {cliente.pulmaoMeses.toFixed(1)} meses
+            <span>pulmão <b className="text-stone-800">{cliente.pulmaoMeses.toFixed(1).replace(".", ",")}m</b>
+              <span title={TIP_PULMAO} className="inline-flex items-center justify-center w-3.5 h-3.5 ml-1 rounded-full border border-stone-400 text-stone-500 text-[9px] italic cursor-help align-middle">i</span>
             </span>
           )}
+          <span className="text-stone-500">saldo <b className="font-mono text-stone-700">{(cliente.saldo || 0).toFixed(0)}</b> · cmc <b className="font-mono text-stone-700">{(s.cmc || 0).toFixed(0)}</b></span>
         </div>
+        <div className="text-[11px] font-semibold whitespace-nowrap" style={{ color: horiz.cor }}>{horiz.txt}</div>
       </div>
-    </button>
+    </div>
+  );
+}
+
+function DistribuicaoUnificada({ ug, onClickCliente }) {
+  const ehGD2 = ug.tipo === "GD2";
+  const cap = ug.capacidade_kwh || 0;
+  const ucGer = ug.clientes.find(c => c.ehUCGeradora);
+  const genCmc = ucGer?.cmcEfetivo || 0;
+  const denom = capacidadeEfetivaUG(ug, ug.clientes); // GD2: cap−genCmc · GD1: cap
+  const car = carregamentoUG(ug.clientes, ug);
+  const corTotal = corCarregamento(car);
+  const estado = estadoCarregamento(car);
+
+  // Servidos (rateio > 0 e CMC > 0). Em GD1, a geradora também é linha de carga.
+  const servidos = ug.clientes
+    .filter(c => !c.ehUCGeradora && (c.cmcEfetivo || 0) > 0 && (c.rateio_pct || 0) > 0)
+    .map(c => ({ cliente: c, cmc: c.cmcEfetivo, ehGeradora: false }));
+  if (!ehGD2 && ucGer && genCmc > 0) {
+    servidos.push({ cliente: ucGer, cmc: genCmc, ehGeradora: true });
+  }
+  const segmentos = servidos
+    .map(s => ({
+      ...s,
+      recebe: s.cliente.rateio_pct || 0,
+      consome: denom > 0 ? (s.cmc / denom) * 100 : 0,
+      proj: s.ehGeradora ? null : projetarHorizonte(s.cliente, s.cliente.rateio_pct || 0, denom),
+    }))
+    .sort((a, b) => b.cmc - a.cmc);
+
+  // Escala comum das barras (comparável entre linhas).
+  const scaleMax = Math.max(10, Math.ceil(Math.max(...segmentos.flatMap(s => [s.recebe, s.consome]), 0) / 10) * 10);
+
+  // CMC > 0 mas 0% de rateio: UC sem UG efetiva — não conta no carregamento.
+  const naoServidos = ug.clientes.filter(
+    c => !c.ehUCGeradora && (c.cmcEfetivo || 0) > 0 && (c.rateio_pct || 0) === 0
+  );
+
+  return (
+    <div className="mb-4 border border-stone-200 p-6 bg-white shadow-auri-sm">
+      <div className="flex items-baseline justify-between mb-1">
+        <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Distribuição</h3>
+        <p className="text-xs text-stone-600">recebe = rateio % · consome = CMC ÷ {ehGD2 ? "distribuível" : "capacidade"}</p>
+      </div>
+      <p className="text-[11px] text-stone-600 mb-4 leading-relaxed">
+        {ehGD2 ? (
+          <>
+            <span className="font-mono">{cap.toFixed(0)}</span> capacidade − <span className="font-mono">{genCmc.toFixed(0)}</span> autoconsumo da geradora
+            {ucGer ? <span className="text-stone-500"> ({ucGer.nome})</span> : null} = <span className="font-mono text-stone-700">{denom.toFixed(0)} kWh/mês distribuíveis</span>.
+            Onde <b>recebe &lt; consome</b>, o saldo drena; onde <b>recebe &gt; consome</b>, acumula.
+          </>
+        ) : (
+          <>
+            Base = <span className="font-mono text-stone-700">{cap.toFixed(0)} kWh/mês</span> de capacidade. Em GD1 a geradora participa do rateio (entra como linha de carga).
+            Onde <b>recebe &lt; consome</b>, o saldo drena; onde <b>recebe &gt; consome</b>, acumula.
+          </>
+        )}
+      </p>
+
+      {denom <= 0 ? (
+        <p className="text-center py-6 text-stone-600 text-sm">
+          Sem energia distribuível — a geradora consome toda a capacidade. Carregamento não aplicável.
+        </p>
+      ) : (
+        <>
+          {/* geradora GD2: reserva (autoconsumo antes do rateio) */}
+          {ehGD2 && ucGer && (
+            <div className="flex justify-between items-center bg-bone/60 border border-dashed border-stone-200 rounded-md px-3 py-2 mb-2 text-[11px] text-stone-600">
+              <span><span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase mr-2">geradora</span>{ucGer.nome} · autoconsumo <b className="font-mono">{genCmc.toFixed(0)} kWh</b> (reservado antes do rateio)</span>
+              <span className="font-mono text-stone-400">saldo {(ucGer.saldo || 0).toFixed(0)} kWh · preso (GD2)</span>
+            </div>
+          )}
+
+          <div>
+            {segmentos.map(s => (
+              <LinhaUnificada key={s.cliente.uc} s={s} scaleMax={scaleMax} denom={denom} onClick={() => onClickCliente(s.cliente)} />
+            ))}
+          </div>
+
+          {/* Não servidos (0% de rateio) */}
+          {naoServidos.length > 0 && (
+            <div className="mt-3 pt-3 border-t border-stone-200">
+              <p className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-2">Não contam no carregamento (0% de rateio)</p>
+              <div className="space-y-1">
+                {naoServidos.map(c => (
+                  <button
+                    key={c.uc}
+                    onClick={() => onClickCliente(c)}
+                    className="w-full text-left flex items-center justify-between gap-3 hover:bg-stone-100 px-2 py-1 transition-colors"
+                  >
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="text-[9px] px-1 py-px bg-[#e9eef3] text-[#2f6690] border border-[#2f6690]/40 uppercase shrink-0">0%</span>
+                      <span className="text-xs text-stone-500 truncate">{c.nome}</span>
+                    </span>
+                    <span className="text-[10px] font-mono text-stone-400 shrink-0">cmc {(c.cmcEfetivo || 0).toFixed(0)} kWh</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Rodapé: soma de rateio + carregamento total */}
+          <div className="mt-4 pt-4 border-t border-stone-200 flex items-baseline justify-between gap-4 text-xs flex-wrap">
+            <span className="text-stone-600 uppercase tracking-[0.18em]">
+              Soma rateio <span className={`font-mono normal-case tracking-normal ml-1 ${ug.erro ? "text-terra-600" : "text-[#2f7a52]"}`}>{ug.soma_rateio.toFixed(0)}% / 100%</span>
+            </span>
+            <span className="text-stone-600 uppercase tracking-[0.18em]">
+              Carregamento total <span className="ml-1 normal-case tracking-normal" style={{ color: estado.cor }}>· {estado.label}</span>
+              <span className="font-mono text-base ml-2" style={{ color: corTotal }}>{car.toFixed(1)}%</span>
+            </span>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -415,11 +583,9 @@ function TabelaClientes({ clientes, onClickCliente }) {
 // ─── TelaUGDetalhe ───────────────────────────────────────────
 function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
-  const benef = ug.clientes.filter(c => !c.ehUCGeradora).sort((a, b) => b.rateio_pct - a.rateio_pct);
   const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || 0), 0);
   const cap = ug.capacidade_kwh || 0;
   const car = carregamentoUG(ug.clientes, ug);
-  const maxPct = Math.max(...ug.clientes.map(c => c.rateio_pct), 50);
   const planoUG = planoGlobal?.por_ug?.[ug.nome];
   const realocacoesUG = (planoGlobal?.realocar || []).filter(r => r.ug_origem === ug.nome || r.ug_destino === ug.nome);
 
@@ -460,20 +626,7 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
           </div>
         </div>
       )}
-      <div className="mb-4 border border-stone-200 p-6 bg-white shadow-auri-sm">
-        <div className="flex items-baseline justify-between mb-4">
-          <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Distribuição de Rateio</h3>
-          <p className="text-xs text-stone-600">largura = % · cor = status do saldo</p>
-        </div>
-        <div className="space-y-1.5">
-          {ucGer && <DiagramaRow cliente={ucGer} maxPct={maxPct} onClick={() => onClickCliente(ucGer)} ehGeradora />}
-          {benef.map(c => <DiagramaRow key={c.uc} cliente={c} maxPct={maxPct} onClick={() => onClickCliente(c)} />)}
-        </div>
-        <div className="mt-4 pt-4 border-t border-stone-200 flex justify-between text-xs">
-          <span className="text-stone-600 uppercase tracking-[0.18em]">Soma total</span>
-          <span className={`font-mono text-base ${ug.erro ? "text-terra-600" : "text-[#2f7a52]"}`}>{ug.soma_rateio.toFixed(0)}% / 100%</span>
-        </div>
-      </div>
+      <DistribuicaoUnificada ug={ug} onClickCliente={onClickCliente} />
       <div className="border border-stone-200 p-6 bg-white shadow-auri-sm mb-4">
         <div className="flex items-baseline justify-between mb-4">
           <div>

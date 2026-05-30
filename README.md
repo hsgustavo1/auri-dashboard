@@ -52,6 +52,18 @@ O objetivo central do otimizador é **carregamento ≈ 100%** (casar geração�
 
 Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG Detalhe, Otimizador, Comparativo, Simulador), eliminando divergências entre telas.
 
+### Tela UG Detalhe — card "Distribuição" (unificado)
+
+`DistribuicaoUnificada` (`App.jsx`) funde, numa linha por cliente, o que antes eram dois cards separados (rateio + carregamento):
+
+- **Barras gêmeas** na mesma escala: `recebe` (rateio %) e `consome` (CMC ÷ denominador — distribuível em GD2, capacidade em GD1). A comparação visual é direta: barra `recebe` mais curta que `consome` = drena; mais longa = acumula.
+- **Direção do saldo** = sinal de `recebe − consome` (o net mensal de `projetarHorizonte`, em kWh/mês).
+- **Status** (cor da barra `consome` + chip **"Saldo …"**) = nível do saldo **hoje** (`statusSaldo`).
+- **Horizonte** (à direita) = evento projetado mantendo o rateio atual, na nomenclatura da legenda: `Crítico em ~Xm` / `Adequado` / `Excessivo em ~Xm` / `Crítico hoje`. Acúmulo a mais de 12 meses (`CAP_HORIZONTE_MESES`) é exibido como **Adequado** (não acionável).
+- **Pulmão** com tooltip (ⓘ) explicando a diferença para o horizonte: pulmão = `saldo ÷ consumo` (geração parada, pior caso); horizonte = projeção com o cliente **ainda recebendo** rateio (só o déficit líquido drena). Crítico = saldo < 0,5× CMC.
+- **GD2:** a geradora aparece como **reserva** (autoconsumo antes do rateio). **GD1:** a geradora entra como linha de carga (`saldo fluido`, sem horizonte). UCs a **0% de rateio** ficam numa seção "não contam no carregamento".
+- Rodapé: **Soma rateio X% / 100%** (validação regulatória) + **Carregamento total** (objetivo real).
+
 ### CMC: efetivo vs. baseline (regime ativo)
 
 Há **dois** números de consumo médio, para fins distintos:
