@@ -35,8 +35,7 @@ Tokens de cor de status de saldo (`statusSaldo`):
 | **UC** (Unidade Consumidora) | Unidade que recebe créditos via rateio. |
 | **GD1 vs GD2** | GD1: a geradora participa do rateio, seu saldo é real e recebe status/horizonte como qualquer cliente. GD2: a geradora autoconsome antes do rateio e seu saldo fica **travado** por regulação (status fixo "UC Geradora"). |
 | **Rateio %** | Percentual da geração da UG alocado para cada UC. Deve somar exatamente 100% por UG. |
-| **CMC / cmcEfetivo** | Consumo médio (12m, últimos 6 com peso dobrado). `cmcEfetivo = cmc || media_consumo`. Usado em **carregamento e otimizador**. |
-| **cmcBaseline** | CMC de **regime ativo**, robusto (winsorização mediana±k·MAD + âncora P75). Usado em **pulmão e status** — ver abaixo. |
+| **CMC** | Consumo médio de regime ativo: baseline robusto (P75-anchored, winsorizado, ignora meses "parado") → fallback para média ponderada 12m → fallback para `media_consumo` (clientes novos). **Um único campo** usado em carregamento, otimizador, projeção, pulmão e status. |
 | **colchaoIdeal** | `2 × cmcEfetivo` — saldo-alvo de longo prazo. |
 | **Saldo** | Créditos acumulados não consumidos (kWh). |
 | **Carregamento** | Quanto da geração distribuível está comprometida. **Type-aware** (ver abaixo). Faixa-alvo: 95–105%. |
@@ -64,16 +63,21 @@ Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG De
 - **GD2:** a geradora aparece como **reserva** (autoconsumo antes do rateio, saldo travado). **GD1:** a geradora entra como linha de carga com barras gêmeas, horizonte e status real de saldo (igual aos demais clientes). UCs a **0% de rateio** ficam numa seção "não contam no carregamento".
 - Rodapé: **Soma rateio X% / 100%** (validação regulatória) + **Carregamento total** (objetivo real).
 
-### CMC: efetivo vs. baseline (regime ativo)
+### CMC — campo unificado
 
-Há **dois** números de consumo médio, para fins distintos:
+Um único campo `cmc` por cliente, calculado como:
 
-- **`cmcEfetivo`** (`calcularCMC`, fórmula original `0,6 × recente ponderado + 0,4 × média`) → usado em **carregamento e decisões do otimizador**.
-- **`cmcBaseline`** (`cmcBaseline`) → **robusto**: winsoriza cada mês para `mediana ± k·MAD` (apara picos altos e quedas pontuais) e ancora os "meses ativos" no **P75** (um trecho parado longo não puxa a referência para baixo). Usado em **pulmão e status de saldo**.
+```
+cmc = cmcBaseline(histórico) || calcularCMC(histórico) || media_consumo
+```
 
-Motivo: um cliente cujo consumo **caiu** (ex.: Gelso) tem o `cmcEfetivo` deprimido → `saldo/cmcEfetivo` daria um pulmão **falsamente alto** (créditos que parecem durar 15 meses mas, quando o consumo voltar, drenam rápido). O `cmcBaseline` reflete o consumo *normal* do cliente, então o pulmão/status ficam realistas. Parâmetros em `CMC_PARAMS`.
+- **`cmcBaseline`** (primário): ancora os meses no P75, filtra apenas meses "ativos" (≥ 40% do P75), winsoriza outliers. Ignora períodos parados.
+- **`calcularCMC`** (fallback interno do baseline): média ponderada 12m com recência (60/40). Ativado quando não há meses ativos.
+- **`media_consumo`** (fallback externo): col F do S_C_Analítico. Cobre clientes novos sem histórico algum.
 
-Campos auxiliares: `cmcRecente` (média dos últimos N meses, com zeros) e `emRecuperacao` (`cmcRecente < PARADO_FRAC × cmcBaseline`) — base da sinalização **"parado"** (ver Estágio 4).
+O mesmo `cmc` é usado em todas as telas e cálculos: carregamento, otimizador, projeção de saldo, pulmão e status. Elimina a discrepância anterior onde o "CMC" exibido na UI diferia do CMC usado no pulmão.
+
+Campo auxiliar: `cmcRecente` (média dos últimos N meses) e `emRecuperacao` (`cmcRecente < PARADO_FRAC × cmc`) — base da sinalização **"parado"** (ver Estágio 4).
 
 ### Status de saldo
 

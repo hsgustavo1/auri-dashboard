@@ -55,9 +55,8 @@ function blendRecencia(serie) {
   return (sp / sw) * 0.6 + media * 0.4;
 }
 
-// CMC efetivo (usado em carregamento/otimizador): fórmula ORIGINAL, sem
-// winsorização — preserva o carregamento/otimizador calibrados byte-a-byte.
-// A robustez a outliers fica restrita ao cmcBaseline (pulmão/status).
+// calcularCMC: fallback interno de cmcBaseline quando não há meses "ativos".
+// Mantido separado para compatibilidade com a lógica de fallback em cmcBaseline.
 export function calcularCMC(arr) {
   const v = arr.filter(x => x !== null && x !== undefined && x > 0);
   if (!v.length) return 0;
@@ -128,21 +127,16 @@ export function buildClientes(scData, fatData, clientesBase) {
       return (v !== undefined && v !== null) ? v : (fat[m]?.saldo ?? null);
     });
 
-    const cmc = consumoArr.some(v => v !== null)
-      ? calcularCMC(consumoArr)
-      : calcularCMC(Object.values(fat).map(f => f.consumo).filter(Boolean));
-
     const mediaConsumo = sc.media_consumo || 0;
-    // cmcEfetivo: usa CMC histórico se disponível; fallback para media_consumo (S_C_Analitico col F).
-    // Sinal de demanda principal para o otimizador/carregamento (resolve Input 7 — cliente novo).
-    const cmcEfetivo = cmc > 0 ? cmc : mediaConsumo;
 
-    // Baseline de REGIME ATIVO + atividade recente — usados em pulmão/status
-    // (não no carregamento/otimizador). Evita pulmão falso de clientes parados.
+    // CMC unificado: baseline robusto (P75, winsorizado, regime ativo)
+    // → fallback interno para calcularCMC quando sem meses ativos
+    // → fallback externo para media_consumo (S_C_Analitico col F) quando sem histórico (cliente novo).
+    // Um único número usado em carregamento, otimizador, projeção, pulmão e status.
     const baseFonte = consumoArr.some(v => v !== null) ? consumoArr : Object.values(fat).map(f => f.consumo);
-    const cmcBase = cmcBaseline(baseFonte) || cmcEfetivo;
+    const cmc = cmcBaseline(baseFonte) || mediaConsumo;
     const cmcRec = cmcRecente(baseFonte);
-    const emRecuperacao = cmcBase > 0 && cmcRec < CMC_PARAMS.PARADO_FRAC * cmcBase;
+    const emRecuperacao = cmc > 0 && cmcRec < CMC_PARAMS.PARADO_FRAC * cmc;
 
     const saldo = saldoAtualFn(saldoHist) || Object.values(fat).slice(-1)[0]?.saldo || 0;
     const travado = saldoTravadoFn(saldoHist);
@@ -151,17 +145,16 @@ export function buildClientes(scData, fatData, clientesBase) {
     const tipoGd = (base.geradora || sc.ug) ? TIPO_GD[base.geradora || sc.ug] : null;
     const ug = base.geradora || sc.ug || null;
 
-    // Pulmão e status de saldo usam o BASELINE (regime ativo), não o cmcEfetivo —
-    // assim um cliente "parado" não aparece com pulmão/saúde falsamente inflados.
+    // Status e pulmão usam o CMC unificado (regime ativo).
     let status;
     if (ehUCGeradora && tipoGd === "GD2") {
       // GD2: saldo preso — não há como agir sobre ele, exibe apenas como "UC Geradora".
-      status = { nivel: "geradora", label: "UC Geradora", cor: "#a89e89", razao: cmcBase > 0 ? saldo / cmcBase : 0 };
+      status = { nivel: "geradora", label: "UC Geradora", cor: "#a89e89", razao: cmc > 0 ? saldo / cmc : 0 };
     } else {
       // GD1 geradora e todos os clientes comuns: usa status real de saldo.
-      status = statusSaldo(saldo, cmcBase);
+      status = statusSaldo(saldo, cmc);
     }
-    const pulmaoMeses = cmcBase > 0 ? saldo / cmcBase : null;
+    const pulmaoMeses = cmc > 0 ? saldo / cmc : null;
 
     return {
       uc: base.uc,
@@ -178,8 +171,6 @@ export function buildClientes(scData, fatData, clientesBase) {
       classe: base.classe,
       rateio_pct: sc.rateio_pct !== undefined ? sc.rateio_pct : 0,
       cmc,
-      cmcEfetivo,
-      cmcBaseline: cmcBase,
       cmcRecente: cmcRec,
       emRecuperacao,
       pulmaoMeses,
@@ -187,7 +178,7 @@ export function buildClientes(scData, fatData, clientesBase) {
       saldo, saldoArr, consumoArr, meses, status, travado, ehUCGeradora,
       travamentoSuspeito: travado && !ehUCGeradora && saldo > OPT_PARAMS.SALDO_TRAVADO_MIN,
       tipoGd,
-      colchaoIdeal: cmcEfetivo * 2,
+      colchaoIdeal: cmc * 2,
     };
   });
 }
@@ -228,7 +219,7 @@ function classificarUC(c) {
   // Saldo invariante há 6+ meses com valor significativo: sem ação possível.
   if (c.travado && c.saldo > OPT_PARAMS.SALDO_TRAVADO_MIN && !c.ehUCGeradora) return "fixa-travada";
   // UC sem UG associada mas com sinal de demanda → entra no Estágio 1.
-  if (!c.ug && c.cmcEfetivo > 0) return "orfa";
+  if (!c.ug && c.cmc > 0) return "orfa";
   // UC geradora GD1: pode receber rateio; respeitar % atual como orientação.
   if (c.ehUCGeradora && c.tipoGd === "GD1") return "geradora-ativa";
   // Cliente novo (sem histórico) com orientação manual (% atual ≠ 0): respeita.
@@ -247,14 +238,14 @@ function diagnosticarUG(ug) {
   const ajustaveis = clientes.filter(c => c.categoria === "ajustavel");
   const ucGer = clientes.find(c => c.ehUCGeradora);
 
-  const genCmc = ucGer?.cmcEfetivo || 0;
+  const genCmc = ucGer?.cmc || 0;
   // distribuivel: capacidade menos o autoconsumo da geradora (que vai antes do rateio).
   const distribuivel = Math.max(0, (ug.capacidade_kwh || 0) - genCmc);
 
   // demanda dos beneficiários SERVIDOS pelo rateio (rateio > 0). Um cliente a 0%
   // não é servido por esta UG (UC sem UG efetiva) — não entra no carregamento.
-  const benef = clientes.filter(c => !c.ehUCGeradora && c.cmcEfetivo > 0 && (c.rateio_pct || 0) > 0);
-  const demanda = benef.reduce((s, c) => s + c.cmcEfetivo, 0);
+  const benef = clientes.filter(c => !c.ehUCGeradora && c.cmc > 0 && (c.rateio_pct || 0) > 0);
+  const demanda = benef.reduce((s, c) => s + c.cmc, 0);
   // Carregamento UNIFICADO (type-aware): GD2 benef÷distribuível, GD1 (benef+geradora)÷cap.
   // Usa a versão escalar para casar com os recálculos incrementais de swap/órfãs.
   const carregamento = carregamentoDeDemanda(demanda, ug, genCmc);
@@ -286,13 +277,13 @@ function diagnosticarUG(ug) {
 // ajustáveis (excluindo travados e fixas). Reflete a tolerância coletiva da UG
 // a um déficit temporário de geração.
 function pulmaoColetivoUG(d) {
-  const elegiveis = d.ajustaveis.filter(c => c.cmcEfetivo > 0);
+  const elegiveis = d.ajustaveis.filter(c => c.cmc > 0);
   if (!elegiveis.length) return 0;
   // Pulmão usa o BASELINE (regime ativo), não o cmcEfetivo — evita pulmão falso
   // de clientes parados. Pondera pelo baseline (consumidores maiores pesam mais).
   let pesoCmc = 0, somaMesesPonderada = 0;
   elegiveis.forEach(c => {
-    const base = c.cmcBaseline || c.cmcEfetivo;
+    const base = c.cmc;
     if (!base) return;
     const meses = c.saldo / base; // razão saldo/baseline = meses de pulmão real
     somaMesesPonderada += meses * base;
@@ -316,7 +307,7 @@ function alocarOrfas(orfas, diagnosticos) {
   const MAX = OPT_PARAMS.FAIXA_ALVO_MAX;
   const TETO = OPT_PARAMS.TETO_CARREGAMENTO_ORFA;
   // Maiores primeiro: itens grandes são posicionados antes dos pequenos.
-  const sortedOrfas = [...orfas].sort((a, b) => b.cmcEfetivo - a.cmcEfetivo);
+  const sortedOrfas = [...orfas].sort((a, b) => b.cmc - a.cmc);
 
   // Aplica a alocação (muta o diagnóstico do destino).
   const aplicar = (orfa, cmc, c, motivo, severidade, extra, descricao) => {
@@ -341,7 +332,7 @@ function alocarOrfas(orfas, diagnosticos) {
   };
 
   sortedOrfas.forEach(orfa => {
-    const cmc = orfa.cmcEfetivo;
+    const cmc = orfa.cmc;
 
     // Candidatos: carregamento resultante + pulmão + meses até crítico.
     const candidatos = diagnosticos
@@ -422,17 +413,17 @@ function alocarOrfas(orfas, diagnosticos) {
 // Rateio ideal de longo prazo (alvo, não passo). Resolve Inputs 2/5/6 ao subtrair
 // gap saldo→colchão do CMC: saldo excessivo → recebe menos; saldo baixo → recebe mais.
 function rateioIdealAlvo(cliente, distribuivel) {
-  if (!distribuivel || !cliente.cmcEfetivo) return 0;
+  if (!distribuivel || !cliente.cmc) return 0;
   const deltaMensal = (cliente.colchaoIdeal - cliente.saldo) / 6;
-  const creditoAlvo = Math.min(Math.max(0, cliente.cmcEfetivo + deltaMensal), cliente.cmcEfetivo * 1.5);
+  const creditoAlvo = Math.min(Math.max(0, cliente.cmc + deltaMensal), cliente.cmc * 1.5);
   return (creditoAlvo / distribuivel) * 100;
 }
 
 function mesesParaNormalizar(cliente, novoRateio, distribuivel) {
   const recebeMensal = (novoRateio / 100) * distribuivel;
-  const saldoLiquido = recebeMensal - cliente.cmcEfetivo;
+  const saldoLiquido = recebeMensal - cliente.cmc;
   const gap = cliente.saldo - cliente.colchaoIdeal;
-  if (Math.abs(gap) < cliente.cmcEfetivo * 0.2) return 0;
+  if (Math.abs(gap) < cliente.cmc * 0.2) return 0;
   if (gap > 0 && saldoLiquido >= 0) return 999;
   if (gap < 0 && saldoLiquido <= 0) return 999;
   return Math.ceil(Math.abs(gap) / Math.abs(saldoLiquido));
@@ -451,7 +442,7 @@ function obterMotivo(c, delta) {
 
 // ─── Estágio 2: ajuste interno por UG ────────────────────────────────
 function ajusteInternoUG(d) {
-  const ajustaveis = d.ajustaveis.filter(c => c.cmcEfetivo > 0);
+  const ajustaveis = d.ajustaveis.filter(c => c.cmc > 0);
   if (!ajustaveis.length) {
     return { acoes: [], soma_final: d.soma_rateio, alvos: {} };
   }
@@ -546,7 +537,7 @@ function swapEntreUGs(diagnosticos) {
 
     diagnosticos.forEach(ugOrigem => {
       ugOrigem.ajustaveis.forEach(cliente => {
-        if (jaRealocados.has(cliente.uc) || !cliente.cmcEfetivo) return;
+        if (jaRealocados.has(cliente.uc) || !cliente.cmc) return;
         diagnosticos.forEach(ugDestino => {
           if (ugDestino.nome === ugOrigem.nome) return;
           if (!ugDestino.capacidade_kwh || !ugOrigem.capacidade_kwh) return;
@@ -560,8 +551,8 @@ function swapEntreUGs(diagnosticos) {
           // Destino não pode estar sobrecarregado (não piorar destino além do máximo).
           if (ugDestino.carregamento >= MAX) return;
 
-          const carrOrigemPos = carregamentoDeDemanda(ugOrigem.demanda - cliente.cmcEfetivo, ugOrigem, ugOrigem.genCmc);
-          const carrDestPos = carregamentoDeDemanda(ugDestino.demanda + cliente.cmcEfetivo, ugDestino, ugDestino.genCmc);
+          const carrOrigemPos = carregamentoDeDemanda(ugOrigem.demanda - cliente.cmc, ugOrigem, ugOrigem.genCmc);
+          const carrDestPos = carregamentoDeDemanda(ugDestino.demanda + cliente.cmc, ugDestino, ugDestino.genCmc);
 
           // Não estourar destino acima do máximo após o swap.
           if (carrDestPos > MAX + 5) return;
@@ -602,13 +593,13 @@ function swapEntreUGs(diagnosticos) {
       ug_destino: destino.nome,
       motivo,
       titulo: `Realocar ${cliente.nome} — ${origem.nome} → ${destino.nome}`,
-      descricao: `${origem.nome} em ${origem.carregamento.toFixed(0)}% → ${carrOrigemPos.toFixed(0)}%, ${destino.nome} em ${destino.carregamento.toFixed(0)}% → ${carrDestPos.toFixed(0)}%. Mover ${cliente.nome} (CMC ${cliente.cmcEfetivo.toFixed(0)} kWh) aproxima ambas da faixa ${MIN}-${MAX}%.`,
+      descricao: `${origem.nome} em ${origem.carregamento.toFixed(0)}% → ${carrOrigemPos.toFixed(0)}%, ${destino.nome} em ${destino.carregamento.toFixed(0)}% → ${carrDestPos.toFixed(0)}%. Mover ${cliente.nome} (CMC ${cliente.cmc.toFixed(0)} kWh) aproxima ambas da faixa ${MIN}-${MAX}%.`,
     });
 
     jaRealocados.add(cliente.uc);
-    origem.demanda -= cliente.cmcEfetivo;
+    origem.demanda -= cliente.cmc;
     origem.carregamento = carrOrigemPos;
-    destino.demanda += cliente.cmcEfetivo;
+    destino.demanda += cliente.cmc;
     destino.carregamento = carrDestPos;
 
     if (totalViolacao() === 0) break;
@@ -630,7 +621,7 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
   // Estágio 1: órfãs (UCs sem UG, encontradas na lista global)
   const fonte = todosClientes || ugsValidadas.flatMap(u => u.clientes);
   const orfas = fonte
-    .filter(c => !c.ug && c.cmcEfetivo > 0)
+    .filter(c => !c.ug && c.cmc > 0)
     .map(c => ({ ...c, categoria: "orfa" }));
   const alocacaoInicial = alocarOrfas(orfas, diagnosticos);
 
@@ -662,7 +653,7 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
   fonteSinal.forEach(c => {
     const cat = classificarUC(c);
     if (cat === "fixa-travada" && c.saldo > OPT_PARAMS.SALDO_TRAVADO_MIN) {
-      const base = c.cmcBaseline || c.cmcEfetivo;
+      const base = c.cmc;
       const meses = base > 0 ? (c.saldo / base) : null;
       if (c.ehUCGeradora && c.tipoGd === "GD2") {
         // Travado ESTRUTURAL (regulação) — sem volta.
@@ -678,7 +669,7 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
         sinalizar.push({
           tipo: "parado", cliente: c, ug_nome: c.ug, motivo: "consumo_baixo_recuperavel",
           titulo: `${c.nome}: parado (sem rateio)`,
-          descricao: `Consumo recente ~${(c.cmcRecente || 0).toFixed(0)} kWh/mês vs. normal ~${(c.cmcBaseline || 0).toFixed(0)} kWh/mês (regime ativo). ` +
+          descricao: `Consumo recente ~${(c.cmcRecente || 0).toFixed(0)} kWh/mês vs. normal ~${(c.cmc || 0).toFixed(0)} kWh/mês (regime ativo). ` +
             `Saldo de ${c.saldo.toFixed(0)} kWh recuperável` + (meses ? ` (~${meses.toFixed(0)}m de pulmão sobre o consumo normal)` : "") +
             ` — drena quando o consumo voltar, diferente do travado estrutural de geradora. A 0% de rateio é UC sem UG efetiva: não conta no carregamento e não deve ser alocado até voltar a consumir.`,
         });
@@ -743,7 +734,7 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
 //   - "estavel": net mensal < 5% do CMC → sem problema previsto
 // Retorna null quando não dá para computar (CMC=0, sem distribuivel, geradora).
 export function projetarHorizonte(cliente, novoRateioPct, distribuivel) {
-  const cmc = cliente.cmcEfetivo;
+  const cmc = cliente.cmc;
   if (!cmc || cmc <= 0 || !distribuivel || cliente.ehUCGeradora) return null;
 
   const saldo = cliente.saldo || 0;
@@ -779,7 +770,7 @@ export function construirCenarioProposto(ug, planoGlobal) {
   const ucsSaindo = new Set(realocOut.map(r => r.cliente.uc));
 
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
-  const distribuivel = Math.max(0, (ug.capacidade_kwh || 0) - (ucGer?.cmcEfetivo || 0));
+  const distribuivel = Math.max(0, (ug.capacidade_kwh || 0) - (ucGer?.cmc || 0));
 
   const linhas = ug.clientes.map(c => {
     if (ucsSaindo.has(c.uc)) {
@@ -804,7 +795,7 @@ export function construirCenarioProposto(ug, planoGlobal) {
 
   realocIn.forEach(r => {
     const pct = distribuivel > 0
-      ? Math.min(100, Math.round((r.cliente.cmcEfetivo / distribuivel) * 100))
+      ? Math.min(100, Math.round((r.cliente.cmc / distribuivel) * 100))
       : 0;
     linhas.push({
       cliente: r.cliente, rateioAtual: 0, rateioProposto: pct,
@@ -822,9 +813,8 @@ export function construirCenarioProposto(ug, planoGlobal) {
   // Atual = só clientes que JÁ estão na UG (exclui entrantes); Proposto = exclui só os que saem.
   // Enriquece cada linha com métricas de saúde do cliente.
   linhas.forEach(l => {
-    l.cmc = l.cliente.cmcEfetivo || 0;          // CMC efetivo (demanda) — p/ exibição
-    l.cmcBase = l.cliente.cmcBaseline || l.cmc;  // baseline regime ativo — p/ pulmão/status
-    l.pulmaoAtualMeses = l.cmcBase > 0 ? (l.cliente.saldo || 0) / l.cmcBase : null;
+    l.cmc = l.cliente.cmc || 0;          // CMC unificado (regime ativo)
+    l.pulmaoAtualMeses = l.cmc > 0 ? (l.cliente.saldo || 0) / l.cmc : null;
   });
 
   // Renormaliza, recalcula estado e projeção, retorna cenário completo.
@@ -976,7 +966,7 @@ export function simularCenario(ug, planoGlobal, opts = {}) {
   // Adiciona clientes externos como "entrando"
   adicionados.forEach(cli => {
     if (!cli || linhas.some(l => l.cliente.uc === cli.uc)) return;
-    const cmc = cli.cmcEfetivo || 0;
+    const cmc = cli.cmc || 0;
     linhas.push({
       cliente: cli,
       rateioAtual: 0,
@@ -1025,10 +1015,10 @@ export function construirCenarioComOverrides(ug, planoGlobal, overrides = {}, op
 
 // ═══════════════════════════════════════════════════════════════════
 // Carregamento UNIFICADO (type-aware) — fonte única para TODAS as telas.
-//   GD2: Σ cmcEfetivo(beneficiários) ÷ distribuível (cap − autoconsumo geradora)
+//   GD2: Σ cmc(beneficiários) ÷ distribuível (cap − autoconsumo geradora)
 //        A geradora GD2 autoconsome ANTES do rateio, então só o distribuível
 //        atende as beneficiárias.
-//   GD1: Σ cmcEfetivo(todos, incl. geradora) ÷ capacidade
+//   GD1: Σ cmc(todos, incl. geradora) ÷ capacidade
 //        A geradora GD1 participa do rateio e também consome.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -1039,9 +1029,9 @@ export function construirCenarioComOverrides(ug, planoGlobal, overrides = {}, op
 export function demandaUG(clientes, ug, rateioDe = c => c.rateio_pct || 0) {
   const servido = c => !c.ehUCGeradora && rateioDe(c) > 0;
   if (ug?.tipo === "GD2")
-    return clientes.filter(servido).reduce((s, c) => s + (c.cmcEfetivo || 0), 0);
+    return clientes.filter(servido).reduce((s, c) => s + (c.cmc || 0), 0);
   const gen = clientes.find(c => c.ehUCGeradora); // GD1: geradora sempre conta
-  return (gen?.cmcEfetivo || 0) + clientes.filter(servido).reduce((s, c) => s + (c.cmcEfetivo || 0), 0);
+  return (gen?.cmc || 0) + clientes.filter(servido).reduce((s, c) => s + (c.cmc || 0), 0);
 }
 
 // Denominador do carregamento conforme o tipo (= distribuível).
@@ -1049,7 +1039,7 @@ export function capacidadeEfetivaUG(ug, clientes) {
   const cap = ug?.capacidade_kwh || 0;
   if (ug?.tipo === "GD2") {
     const ger = clientes.find(c => c.ehUCGeradora);
-    return Math.max(0, cap - (ger?.cmcEfetivo || 0)); // distribuível
+    return Math.max(0, cap - (ger?.cmc || 0)); // distribuível
   }
   return cap; // GD1
 }
@@ -1062,8 +1052,8 @@ export function carregamentoUG(clientes, ug, rateioDe) {
 
 // Versão escalar do carregamento (mesma regra type-aware), para uso interno do
 // otimizador onde a demanda dos beneficiários é mantida como número e atualizada
-// incrementalmente (swaps/órfãs). `demandaBenef` = Σ cmcEfetivo dos beneficiários;
-// `genCmc` = cmcEfetivo da geradora.
+// incrementalmente (swaps/órfãs). `demandaBenef` = Σ cmc dos beneficiários;
+// `genCmc` = cmc da geradora.
 //   GD2: demandaBenef ÷ (cap − genCmc)   ·   GD1: (demandaBenef + genCmc) ÷ cap
 export function carregamentoDeDemanda(demandaBenef, ug, genCmc = 0) {
   const cap = ug?.capacidade_kwh || 0;
@@ -1103,7 +1093,7 @@ export function rateioPropostoDoCliente(cliente, ug, planoGlobal) {
   if (realocIn) {
     const distrib = distribuivelDaUG(ug);
     return distrib > 0
-      ? Math.min(100, Math.round((realocIn.cliente.cmcEfetivo / distrib) * 100))
+      ? Math.min(100, Math.round((realocIn.cliente.cmc / distrib) * 100))
       : 0;
   }
 
@@ -1119,7 +1109,7 @@ export function rateioPropostoDoCliente(cliente, ug, planoGlobal) {
 // Projeta saldo do cliente N meses à frente com o novo rateio aplicado.
 // saldo_em_n = max(0, saldo + n * (recebido - consumido))
 export function projetarSaldoEmNMeses(cliente, novoRateioPct, distribuivel, n = 6) {
-  const cmc = cliente.cmcEfetivo;
+  const cmc = cliente.cmc;
   if (!cmc || !distribuivel || cliente.ehUCGeradora) return cliente.saldo || 0;
   const recebe = (novoRateioPct / 100) * distribuivel;
   return Math.max(0, (cliente.saldo || 0) + n * (recebe - cmc));
@@ -1135,9 +1125,8 @@ export function analisarCenario(cenario, n = 6) {
   const distAtual = bucketVazio();
   const distProposta = bucketVazio();
 
-  // Classificação de saúde usa o BASELINE (regime ativo); a projeção do saldo
-  // (projetarSaldoEmNMeses) continua no consumo efetivo.
-  const baseDe = l => l.cmcBase || l.cliente.cmcBaseline || l.cmc;
+  // Classificação de saúde usa o CMC unificado (regime ativo).
+  const baseDe = l => l.cmc || l.cliente.cmc;
 
   linhas.forEach(l => {
     // Atual exclui clientes que ainda não estão na UG (entrando).

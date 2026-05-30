@@ -21,7 +21,7 @@ const ugGD2 = (cap = 3000, genCmc = 200) => ({
 const ugGD1 = (cap = 3000) => ({ nome: "Piloto", tipo: "GD1", capacidade_kwh: cap, clientes: [] });
 
 const cliente = (uc, cmc, rateio, ehUCGeradora = false, saldo = 0) => ({
-  uc, nome: uc, cmcEfetivo: cmc, rateio_pct: rateio,
+  uc, nome: uc, cmc, rateio_pct: rateio,
   ehUCGeradora, saldo,
   colchaoIdeal: cmc * 2,
   status: statusSaldo(saldo, cmc),
@@ -198,7 +198,7 @@ describe("carregamentoUG e demandaUG", () => {
 // ─── projetarHorizonte ────────────────────────────────────────────────────
 describe("projetarHorizonte", () => {
   const c = (saldo, cmc) => ({
-    saldo, cmcEfetivo: cmc, colchaoIdeal: cmc * 2, ehUCGeradora: false,
+    saldo, cmc, colchaoIdeal: cmc * 2, ehUCGeradora: false,
     status: statusSaldo(saldo, cmc),
   });
 

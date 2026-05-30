@@ -229,7 +229,7 @@ function DistribuicaoUnificada({ ug, onClickCliente }) {
   const ehGD2 = ug.tipo === "GD2";
   const cap = ug.capacidade_kwh || 0;
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
-  const genCmc = ucGer?.cmcEfetivo || 0;
+  const genCmc = ucGer?.cmc || 0;
   const denom = capacidadeEfetivaUG(ug, ug.clientes); // GD2: cap−genCmc · GD1: cap
   const car = carregamentoUG(ug.clientes, ug);
   const corTotal = corCarregamento(car);
@@ -237,8 +237,8 @@ function DistribuicaoUnificada({ ug, onClickCliente }) {
 
   // Servidos (rateio > 0 e CMC > 0). Em GD1, a geradora também é linha de carga.
   const servidos = ug.clientes
-    .filter(c => !c.ehUCGeradora && (c.cmcEfetivo || 0) > 0 && (c.rateio_pct || 0) > 0)
-    .map(c => ({ cliente: c, cmc: c.cmcEfetivo, ehGeradora: false }));
+    .filter(c => !c.ehUCGeradora && (c.cmc || 0) > 0 && (c.rateio_pct || 0) > 0)
+    .map(c => ({ cliente: c, cmc: c.cmc, ehGeradora: false }));
   if (!ehGD2 && ucGer && genCmc > 0) {
     servidos.push({ cliente: ucGer, cmc: genCmc, ehGeradora: true });
   }
@@ -256,7 +256,7 @@ function DistribuicaoUnificada({ ug, onClickCliente }) {
 
   // CMC > 0 mas 0% de rateio: UC sem UG efetiva — não conta no carregamento.
   const naoServidos = ug.clientes.filter(
-    c => !c.ehUCGeradora && (c.cmcEfetivo || 0) > 0 && (c.rateio_pct || 0) === 0
+    c => !c.ehUCGeradora && (c.cmc || 0) > 0 && (c.rateio_pct || 0) === 0
   );
 
   return (
@@ -315,7 +315,7 @@ function DistribuicaoUnificada({ ug, onClickCliente }) {
                       <span className="text-[9px] px-1 py-px bg-[#e9eef3] text-[#2f6690] border border-[#2f6690]/40 uppercase shrink-0">0%</span>
                       <span className="text-xs text-stone-500 truncate">{c.nome}</span>
                     </span>
-                    <span className="text-[10px] font-mono text-stone-400 shrink-0">cmc {(c.cmcEfetivo || 0).toFixed(0)} kWh</span>
+                    <span className="text-[10px] font-mono text-stone-400 shrink-0">cmc {(c.cmc || 0).toFixed(0)} kWh</span>
                   </button>
                 ))}
               </div>
@@ -364,7 +364,7 @@ function montarChartData(cliente, ug, planoGlobal) {
   }));
 
   const saldoNow = cliente.saldo || 0;
-  const cmc = cliente.cmcEfetivo || cliente.cmc || 0;
+  const cmc = cliente.cmc || cliente.cmc || 0;
   const distrib = distribuivelDaUG(ug);
   // GD2: saldo da geradora é "preso" (não participa do rateio) → sem projeção.
   // GD1: geradora participa do rateio com CMC e % reais → projeção válida.
@@ -763,7 +763,7 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
           const reals = planoGlobal.realocar.filter(r => r.ug_origem === ug.nome || r.ug_destino === ug.nome);
           const nAjustes = plUG?.acoes?.length || 0;
           const cap = ug.capacidade_kwh || 0;
-          const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmcEfetivo || c.cmc || 0), 0);
+          const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || c.cmc || 0), 0);
           const car = carregamentoUG(ug.clientes, ug);
           const corCar = car < 95 ? "#c98a1f" : car > 105 ? "#a8482a" : "#2f7a52";
           return (
@@ -828,7 +828,7 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <button onClick={() => onClickCliente(a.cliente)} className="text-stone-800 text-sm hover:text-sun-600">{a.cliente.nome}</button>
                         <span className="text-[10px] font-mono text-stone-600">{a.cliente.uc}</span>
-                        <span className="text-[10px] px-1 py-px bg-stone-200 font-mono text-stone-400">CMC ef. {a.cliente.cmcEfetivo.toFixed(0)} kWh</span>
+                        <span className="text-[10px] px-1 py-px bg-stone-200 font-mono text-stone-400">CMC ef. {a.cliente.cmc.toFixed(0)} kWh</span>
                         <span className="text-[10px] px-1 py-px font-mono uppercase tracking-wider" style={{ color: sevCor, borderLeft: `2px solid ${sevCor}`, paddingLeft: 6 }}>{sevLabel}</span>
                       </div>
                       {a.ug_destino ? (
@@ -906,7 +906,7 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
                       <div className="flex items-center gap-2 mb-1 flex-wrap">
                         <button onClick={() => onClickCliente(r.cliente)} className="text-stone-800 text-sm hover:text-sun-600">{r.cliente.nome}</button>
                         <span className="text-[10px] font-mono text-stone-600">{r.cliente.uc}</span>
-                        <span className="text-[10px] px-1 py-px bg-stone-200 font-mono text-stone-400">CMC {(r.cliente.cmcEfetivo || r.cliente.cmc).toFixed(0)} kWh</span>
+                        <span className="text-[10px] px-1 py-px bg-stone-200 font-mono text-stone-400">CMC {(r.cliente.cmc || r.cliente.cmc).toFixed(0)} kWh</span>
                         <span className="text-xs" style={{ color: r.cliente.status.cor }}>{r.cliente.status.label}</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2 text-xs flex-wrap">
@@ -1100,7 +1100,7 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
 
   // Barra "consome" = CMC ÷ distribuível (referência fixa do consumo real,
   // idêntica nos dois lados). Espelha a visão de barras gêmeas da Visão geral.
-  const consome = denom > 0 ? ((cliente.cmcEfetivo ?? cmc) / denom) * 100 : 0;
+  const consome = denom > 0 ? ((cliente.cmc ?? cmc) / denom) * 100 : 0;
   const corConsome = cliente.status?.cor || "#6b6357";
 
   const corEstado = {
@@ -1814,7 +1814,7 @@ function ControleClienteSlider({ cliente, valorAtual, valor, onChange, otimizado
             <span className="text-xs text-ink truncate">{cliente.nome}</span>
           </div>
           <div className="text-[10px] text-stone-600 font-mono">
-            CMC {(cliente.cmcEfetivo || 0).toFixed(0)} · saldo {(cliente.saldo || 0).toFixed(0)} · <span style={{ color: cliente.status?.cor }}>{cliente.status?.label}</span>
+            CMC {(cliente.cmc || 0).toFixed(0)} · saldo {(cliente.saldo || 0).toFixed(0)} · <span style={{ color: cliente.status?.cor }}>{cliente.status?.label}</span>
           </div>
         </div>
         <div className="flex items-center gap-1 shrink-0">
@@ -2146,7 +2146,7 @@ function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) 
               <option value="">Selecione um cliente…</option>
               {disponiveisParaAdd.map(c => (
                 <option key={c.uc} value={c.uc}>
-                  {c.nome} · {c.ug || "órfã"} · CMC {(c.cmcEfetivo || 0).toFixed(0)}
+                  {c.nome} · {c.ug || "órfã"} · CMC {(c.cmc || 0).toFixed(0)}
                 </option>
               ))}
             </select>
