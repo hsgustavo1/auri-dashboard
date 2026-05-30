@@ -158,7 +158,7 @@ const CAP_HORIZONTE_MESES = 12; // horizonte de acúmulo além disso vira "Adequ
 
 // Traduz o output de projetarHorizonte para texto + cor, usando a nomenclatura da legenda.
 function formatarHorizonteEvento(proj) {
-  if (!proj) return { txt: "saldo fluido", cor: "#a89e89" }; // geradora (GD1)
+  if (!proj) return { txt: "Adequado", cor: "#2f7a52" };
   if (proj.tipo === "estavel") return { txt: "Adequado", cor: "#2f7a52" };
   if (proj.tipo === "ja_critico") return { txt: "Crítico hoje", cor: "#a8482a" };
   if (proj.tipo === "ja_excessivo") return { txt: "Excessivo hoje", cor: "#6d4a8c" };
@@ -177,7 +177,7 @@ function LinhaUnificada({ s, scaleMax, denom, onClick }) {
   const drena = net < -5, acum = net > 5;
   const dirTxt = isGer ? null : drena ? `drena ↓ ${net} kWh/mês` : acum ? `acumula ↑ +${net} kWh/mês` : `equilíbrio ${net} kWh/mês`;
   const dirCor = drena ? "#a8482a" : acum ? "#2f7a52" : "#78716c";
-  const horiz = isGer ? { txt: "saldo fluido", cor: "#a89e89" } : formatarHorizonteEvento(s.proj);
+  const horiz = formatarHorizonteEvento(s.proj);
   const chipLabel = isGer ? "Geradora" : `Saldo ${STATUS_LABEL[cliente.status.nivel] || ""}`;
   const w = v => `${Math.min(100, (v / scaleMax) * 100)}%`;
 
@@ -247,7 +247,7 @@ function DistribuicaoUnificada({ ug, onClickCliente }) {
       ...s,
       recebe: s.cliente.rateio_pct || 0,
       consome: denom > 0 ? (s.cmc / denom) * 100 : 0,
-      proj: s.ehGeradora ? null : projetarHorizonte(s.cliente, s.cliente.rateio_pct || 0, denom),
+      proj: projetarHorizonte(s.cliente, s.cliente.rateio_pct || 0, denom),
     }))
     .sort((a, b) => b.cmc - a.cmc);
 
@@ -366,7 +366,10 @@ function montarChartData(cliente, ug, planoGlobal) {
   const saldoNow = cliente.saldo || 0;
   const cmc = cliente.cmcEfetivo || cliente.cmc || 0;
   const distrib = distribuivelDaUG(ug);
-  const podeProjetar = !cliente.ehUCGeradora && cmc > 0 && distrib > 0;
+  // GD2: saldo da geradora é "preso" (não participa do rateio) → sem projeção.
+  // GD1: geradora participa do rateio com CMC e % reais → projeção válida.
+  const ehGD2 = ug?.tipo === "GD2";
+  const podeProjetar = !(cliente.ehUCGeradora && ehGD2) && cmc > 0 && distrib > 0;
 
   // Ponto "Hoje" — ponte entre histórico e projeção.
   pontos.push({
@@ -398,7 +401,8 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
   const ug = ugsValidadas?.find(u => u.nome === cliente.ug) || null;
   const chartData = montarChartData(cliente, ug, planoGlobal);
   const pctProposto = rateioPropostoDoCliente(cliente, ug, planoGlobal);
-  const propMudouRateio = ug && !cliente.ehUCGeradora && Math.round(pctProposto) !== Math.round(cliente.rateio_pct || 0);
+  // GD1 geradora pode ter rateio otimizado também; GD2 geradora não projeta.
+  const propMudouRateio = ug && !(cliente.ehUCGeradora && ug.tipo === "GD2") && Math.round(pctProposto) !== Math.round(cliente.rateio_pct || 0);
   return (
     <div className="fixed inset-0 bg-forest-900/70 backdrop-blur-sm z-50 flex items-center justify-center p-6" onClick={onClose}>
       <div className="bg-bone border border-stone-200 max-w-3xl w-full max-h-[88vh] overflow-y-auto shadow-auri-lg" onClick={e => e.stopPropagation()}>
@@ -467,7 +471,7 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
             </div>
           )}
           <div className="space-y-2">
-            {cliente.ehUCGeradora && <Alerta cor="stone" texto={`UC GERADORA da UG ${cliente.ug} (${cliente.tipoGd}). ${cliente.tipoGd === "GD2" ? "Saldo travado por regra GD2." : "GD1 — saldo fluido."}`} />}
+            {cliente.ehUCGeradora && <Alerta cor="stone" texto={`UC GERADORA da UG ${cliente.ug} (${cliente.tipoGd}). ${cliente.tipoGd === "GD2" ? "Saldo travado por regra GD2." : "GD1 — saldo participa do rateio."}`} />}
             {cliente.travamentoSuspeito && <Alerta cor="red" texto={`Saldo travado em ${(cliente.saldo||0).toFixed(0)} kWh mas não é UC geradora. Verificar possível erro de configuração.`} />}
             {!cliente.ehUCGeradora && cliente.status.nivel === "critico" && <Alerta cor="red" texto={`Saldo crítico (${(cliente.status.razao||0).toFixed(2)}× CMC). Provavelmente pagando fatura cheia.`} />}
             {!cliente.ehUCGeradora && cliente.status.nivel === "excessivo" && <Alerta cor="purple" texto={`Saldo excessivo (${(cliente.status.razao||0).toFixed(1)}× CMC). Reduzir rateio para drenar antes de expirar.`} />}
@@ -620,7 +624,7 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
               <p className="text-xs text-stone-400 leading-relaxed">
                 {ug.tipo === "GD2"
                   ? `GD2 — saldo de ${(ucGer.saldo||0).toFixed(0)} kWh preso. Apenas excedente após autoconsumo (~${(ucGer.cmc||0).toFixed(0)} kWh/mês) é distribuído às beneficiárias.`
-                  : `GD1 — saldo fluido. Atual: ${(ucGer.saldo||0).toFixed(0)} kWh, consumo médio: ${(ucGer.cmc||0).toFixed(0)} kWh.`}
+                  : `GD1 — saldo participante do rateio. Atual: ${(ucGer.saldo||0).toFixed(0)} kWh, consumo médio: ${(ucGer.cmc||0).toFixed(0)} kWh.`}
               </p>
             </div>
           </div>
@@ -1083,12 +1087,17 @@ function formatarPulmao(meses) {
   return { label: `${meses.toFixed(1)}m pulmão`, cor: "#6d4a8c" };
 }
 
-function LinhaComparativa({ linha, maxPct, onClickCliente, editavel = false, onMudarPct }) {
+function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel = false, onMudarPct }) {
   const { cliente, rateioAtual, rateioProposto, estado, origem, destino, origemMudanca, cmc, pulmaoAtualMeses, projecao } = linha;
   const podeEditar = editavel && estado !== "saindo" && !cliente.ehUCGeradora;
   const editadoManualmente = origemMudanca === "manual";
   const delta = rateioProposto - rateioAtual;
   const ehGeradora = cliente.ehUCGeradora;
+
+  // Barra "consome" = CMC ÷ distribuível (referência fixa do consumo real,
+  // idêntica nos dois lados). Espelha a visão de barras gêmeas da Visão geral.
+  const consome = denom > 0 ? ((cliente.cmcEfetivo ?? cmc) / denom) * 100 : 0;
+  const corConsome = cliente.status?.cor || "#6b6357";
 
   const corEstado = {
     mantido: "#6b6357",
@@ -1121,11 +1130,21 @@ function LinhaComparativa({ linha, maxPct, onClickCliente, editavel = false, onM
           <button onClick={() => onClickCliente(cliente)} className="text-xs text-stone-600 hover:text-sun-600 truncate text-left">{cliente.nome}</button>
         </div>
         <div className="flex items-center gap-2 mb-1">
+          <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">recebe</span>
           <div className="flex-1">
             <BarraComparativa pct={rateioAtual} maxPct={maxPct} cor={corBarraAtual} fantasma={estado === "entrando"} />
           </div>
           <span className="font-mono text-xs text-stone-400 w-10 text-right">{rateioAtual}%</span>
         </div>
+        {!ehGeradora && (
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">consome</span>
+            <div className="flex-1">
+              <BarraComparativa pct={consome} maxPct={maxPct} cor={corConsome} fantasma={estado === "entrando"} />
+            </div>
+            <span className="font-mono text-xs w-10 text-right" style={{ color: corConsome }}>{consome.toFixed(1).replace(".", ",")}%</span>
+          </div>
+        )}
         {/* Metadados do cliente: CMC + pulmão atual */}
         {!ehGeradora && (
           <div className="flex items-center gap-2 text-[10px] font-mono pl-px">
@@ -1166,6 +1185,7 @@ function LinhaComparativa({ linha, maxPct, onClickCliente, editavel = false, onM
           </span>
         </div>
         <div className="flex items-center gap-2 mb-1">
+          <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">recebe</span>
           <div className="flex-1">
             <BarraComparativa pct={rateioProposto} maxPct={maxPct} cor={corBarraProposta} fantasma={estado === "saindo"} />
           </div>
@@ -1187,6 +1207,15 @@ function LinhaComparativa({ linha, maxPct, onClickCliente, editavel = false, onM
             <span className="font-mono text-xs w-10 text-right" style={{ color: corEstado }}>{rateioProposto}%</span>
           )}
         </div>
+        {!ehGeradora && (
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">consome</span>
+            <div className="flex-1">
+              <BarraComparativa pct={consome} maxPct={maxPct} cor={corConsome} fantasma={estado === "saindo"} />
+            </div>
+            <span className="font-mono text-xs w-10 text-right" style={{ color: corConsome }}>{consome.toFixed(1).replace(".", ",")}%</span>
+          </div>
+        )}
         {/* Projeção: quanto tempo a nova % aguenta */}
         <div className="text-[10px] font-mono pl-px">
           {estado === "saindo" ? (
@@ -1452,9 +1481,11 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
     });
   }, [linhas]);
 
+  const denom = cenario.distribuivel || 0;
+  const consomeDe = l => denom > 0 ? (l.cmc / denom) * 100 : 0;
   const maxPct = Math.max(
     50,
-    ...linhas.map(l => Math.max(l.rateioAtual, l.rateioProposto))
+    ...linhas.map(l => Math.max(l.rateioAtual, l.rateioProposto, consomeDe(l)))
   );
 
   const totalMudancas = metricas.nAjustesInternos + metricas.nEntrandoReloc + metricas.nEntrandoOrfa + metricas.nSaindo;
@@ -1629,6 +1660,7 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
               key={`${l.cliente.uc}-${l.estado}-${i}`}
               linha={l}
               maxPct={maxPct}
+              denom={denom}
               onClickCliente={onClickCliente}
               editavel={editando}
               onMudarPct={mudarPct}
@@ -2366,7 +2398,9 @@ export default function App() {
   };
 
   const stats = useMemo(() => {
-    const ativos = clientes.filter(c => c.ug && !c.ehUCGeradora);
+    // Clientes inativos (col N = "INATIVO") já foram excluídos em parseClientes.
+    // Contamos todos os clientes restantes — com ou sem UG atribuída.
+    const ativos = clientes;
     return {
       total:      ativos.length,
       criticos:   ativos.filter(c => c.status.nivel === "critico").length,
@@ -2477,7 +2511,7 @@ export default function App() {
                 ))}
               </div>
               <p className="mt-4 pt-4 border-t border-stone-200 text-[11px] text-stone-600">
-                <span className="text-sun-500">GERADORA</span> = UC física com os painéis. GD2: saldo preso. GD1: saldo fluido. CMC = consumo médio ponderado. Colchão ideal = 2× CMC.
+                <span className="text-sun-500">GERADORA</span> = UC física com os painéis. GD2: saldo preso (não participa do rateio). GD1: saldo participa do rateio. CMC = consumo médio ponderado. Colchão ideal = 2× CMC.
               </p>
             </div>
           </div>

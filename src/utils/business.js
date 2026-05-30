@@ -154,9 +154,11 @@ export function buildClientes(scData, fatData, clientesBase) {
     // Pulmão e status de saldo usam o BASELINE (regime ativo), não o cmcEfetivo —
     // assim um cliente "parado" não aparece com pulmão/saúde falsamente inflados.
     let status;
-    if (ehUCGeradora) {
+    if (ehUCGeradora && tipoGd === "GD2") {
+      // GD2: saldo preso — não há como agir sobre ele, exibe apenas como "UC Geradora".
       status = { nivel: "geradora", label: "UC Geradora", cor: "#a89e89", razao: cmcBase > 0 ? saldo / cmcBase : 0 };
     } else {
+      // GD1 geradora e todos os clientes comuns: usa status real de saldo.
       status = statusSaldo(saldo, cmcBase);
     }
     const pulmaoMeses = cmcBase > 0 ? saldo / cmcBase : null;

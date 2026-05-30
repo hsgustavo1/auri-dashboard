@@ -8,7 +8,7 @@ O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV
 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%.
-- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **modo de edição manual** dos %´s (com renormalização para 100%). Botão **Gerar Formulário Equatorial** (PDF).
+- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Cada cliente exibe **barras gêmeas** (`recebe` vs `consome`) em ambos os lados para visualizar se a proposta aproxima o rateio do consumo real. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **modo de edição manual** dos %´s (com renormalização para 100%). Botão **Gerar Formulário Equatorial** (PDF).
 - **Simulador "E se?"** — experimentação livre: sliders de % por cliente, **override de capacidade** da UG e **movimentação cross-UG** (trazer clientes de outras UGs), comparando Atual / Otimizado / Simulado em tempo real.
 - **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado).
 - **Panorama** — visão agregada: distribuição de saúde de saldo por UG (stacked bar chart), filtro por situação e totais globais.
@@ -33,7 +33,7 @@ Tokens de cor de status de saldo (`statusSaldo`):
 |---|---|
 | **UG** (Unidade Geradora) | Usina solar. 7 no total: Piloto, Alessandro, Daniela (GD1) e Lana, Taliton, Luz Transportes, Cercados e Telas (GD2). A própria UG é também uma UC (geradora). |
 | **UC** (Unidade Consumidora) | Unidade que recebe créditos via rateio. |
-| **GD1 vs GD2** | GD1: a geradora participa do rateio e seu saldo é fluido. GD2: a geradora autoconsome antes do rateio e seu saldo fica **travado** por regulação. |
+| **GD1 vs GD2** | GD1: a geradora participa do rateio, seu saldo é real e recebe status/horizonte como qualquer cliente. GD2: a geradora autoconsome antes do rateio e seu saldo fica **travado** por regulação (status fixo "UC Geradora"). |
 | **Rateio %** | Percentual da geração da UG alocado para cada UC. Deve somar exatamente 100% por UG. |
 | **CMC / cmcEfetivo** | Consumo médio (12m, últimos 6 com peso dobrado). `cmcEfetivo = cmc || media_consumo`. Usado em **carregamento e otimizador**. |
 | **cmcBaseline** | CMC de **regime ativo**, robusto (winsorização mediana±k·MAD + âncora P75). Usado em **pulmão e status** — ver abaixo. |
@@ -61,7 +61,7 @@ Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG De
 - **Status** (cor da barra `consome` + chip **"Saldo …"**) = nível do saldo **hoje** (`statusSaldo`).
 - **Horizonte** (à direita) = evento projetado mantendo o rateio atual, na nomenclatura da legenda: `Crítico em ~Xm` / `Adequado` / `Excessivo em ~Xm` / `Crítico hoje`. Acúmulo a mais de 12 meses (`CAP_HORIZONTE_MESES`) é exibido como **Adequado** (não acionável).
 - **Pulmão** com tooltip (ⓘ) explicando a diferença para o horizonte: pulmão = `saldo ÷ consumo` (geração parada, pior caso); horizonte = projeção com o cliente **ainda recebendo** rateio (só o déficit líquido drena). Crítico = saldo < 0,5× CMC.
-- **GD2:** a geradora aparece como **reserva** (autoconsumo antes do rateio). **GD1:** a geradora entra como linha de carga (`saldo fluido`, sem horizonte). UCs a **0% de rateio** ficam numa seção "não contam no carregamento".
+- **GD2:** a geradora aparece como **reserva** (autoconsumo antes do rateio, saldo travado). **GD1:** a geradora entra como linha de carga com barras gêmeas, horizonte e status real de saldo (igual aos demais clientes). UCs a **0% de rateio** ficam numa seção "não contam no carregamento".
 - Rodapé: **Soma rateio X% / 100%** (validação regulatória) + **Carregamento total** (objetivo real).
 
 ### CMC: efetivo vs. baseline (regime ativo)
@@ -76,6 +76,8 @@ Motivo: um cliente cujo consumo **caiu** (ex.: Gelso) tem o `cmcEfetivo` deprimi
 Campos auxiliares: `cmcRecente` (média dos últimos N meses, com zeros) e `emRecuperacao` (`cmcRecente < PARADO_FRAC × cmcBaseline`) — base da sinalização **"parado"** (ver Estágio 4).
 
 ### Status de saldo
+
+Aplicado a **todos os clientes e geradoras GD1**. Geradoras GD2 exibem status fixo "UC Geradora" (saldo travado, sem ação possível).
 
 | Nível | Razão saldo/CMC |
 |---|---|
@@ -94,7 +96,7 @@ Planilha Google Sheets publicada como CSV (configurada em `src/config.js`):
 | Aba | Conteúdo |
 |---|---|
 | `fatAuri` | Faturamento mensal por UC (consumo, saldo, mês) |
-| `clientes` | Cadastro (coluna A = UC de referência, nome, UG, desconto, CPF/CNPJ, endereço/classe) |
+| `clientes` | Cadastro (UC, nome, UG, desconto, CPF/CNPJ, endereço/classe). **Coluna N (Geradora):** valor `"INATIVO"` exclui o cliente do painel. Clientes inativos são filtrados em `parseClientes` e nunca entram no array `clientes`. |
 | `scAnalitico` | Rateio atual (col E), média de consumo (col F), histórico de saldo |
 | `infoGerais` | Capacidade instalada e ocupação atual de cada UG |
 
@@ -260,7 +262,7 @@ git commit → git push origin main → Vercel webhook → build → deploy (~30
 
 ## Gráfico de Saldo — DetalheCliente
 
-O modal de detalhe exibe "SALDO: HISTÓRICO + PROJEÇÃO 6M" com quatro linhas:
+O modal de detalhe exibe "SALDO: HISTÓRICO + PROJEÇÃO 6M" com quatro linhas. Disponível para todos os clientes e **também para geradoras GD1** (que participam do rateio com CMC e % reais). Geradoras GD2 não projetam (saldo travado).
 
 | Linha | Cor | Tipo |
 |---|---|---|
