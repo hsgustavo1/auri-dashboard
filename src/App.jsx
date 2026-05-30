@@ -446,7 +446,11 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
               <ResponsiveContainer width="100%" height={240}>
                 <LineChart data={chartData} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
                   <XAxis dataKey="label" stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
-                  <YAxis stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
+                  <YAxis
+                    stroke="#a89e89"
+                    tick={{ fill: "#6b6357", fontSize: 11 }}
+                    domain={[0, dataMax => Math.ceil(Math.max(dataMax, cliente.colchaoIdeal || 0) * 1.08 / 50) * 50]}
+                  />
                   <Tooltip
                     contentStyle={{ backgroundColor: "#f5efe2", border: "1px solid #e2dbcc", fontSize: 12 }}
                     labelStyle={{ color: "#1a1812" }}
