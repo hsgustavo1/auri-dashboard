@@ -4,7 +4,7 @@ Dashboard operacional para gestão de rateio de créditos de energia solar distr
 
 ## Visão Geral
 
-O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV) e entrega seis telas:
+O sistema consome cinco abas de uma planilha Google Sheets (publicadas como CSV) e entrega sete telas:
 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%.
@@ -12,6 +12,7 @@ O sistema consome quatro abas de uma planilha Google Sheets (publicadas como CSV
 - **Simulador "E se?"** — experimentação livre: sliders de % por cliente, **override de capacidade** da UG e **movimentação cross-UG** (trazer clientes de outras UGs), comparando Atual / Otimizado / Simulado em tempo real.
 - **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado).
 - **Panorama** — visão agregada: distribuição de saúde de saldo por UG (stacked bar chart), filtro por situação e totais globais.
+- **LTV** — análise financeira por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri pela UC do cliente) e LTV = receita − despesa. Gráfico de barras empilhadas por mês (pago vs. pendente), tabela com ratio Rec/Desp, filtros de período e UG, headers clicáveis para ordenação. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente` para clientes com dados.
 
 Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
@@ -107,32 +108,38 @@ Planilha Google Sheets publicada como CSV (configurada em `src/config.js`):
 
 | Aba | Conteúdo |
 |---|---|
-| `fatAuri` | Faturamento mensal por UC (consumo, saldo, mês) |
+| `fatAuri` | Faturamento mensal por UC (consumo, saldo, mês, **Fatura Auri R$**) |
 | `clientes` | Cadastro (UC, nome, UG, desconto, CPF/CNPJ, endereço/classe). **Coluna N (Geradora):** valor `"INATIVO"` exclui o cliente do painel. Clientes inativos são filtrados em `parseClientes` e nunca entram no array `clientes`. |
 | `scAnalitico` | Rateio atual (col E), média de consumo (col F), histórico de saldo |
 | `infoGerais` | Capacidade instalada e ocupação atual de cada UG |
+| `rdEquatorial` | Receitas e despesas por UC × mês: cobranças ao cliente (Receita) e faturas Equatorial pagas pela Auri (Despesa), com status Pago/Recebido/pendente |
 
 Geradoras identificadas por código de UC em `UC_GERADORA_NOVA` / `UC_GERADORA_ANTIGA` (`src/config.js`).
+
+**Receita implícita para geradoras:** UCs Geradoras pertencem a sócios-investidores que recebem dividendos. Quando não há Receita explícita no `rdEquatorial` para um mês, a coluna `Fatura Auri (R$)` do `fatAuri` é usada como receita implícita (tratada como recebida). Isso evita subnotificar o LTV das UCs geradoras que não geram saída de caixa direta.
 
 ---
 
 ## Arquitetura
 
 ```
-Google Sheets (CSV)
+Google Sheets (5 abas CSV publicadas)
       │
       ▼
-src/hooks/useSheetData.js   ← fetch + parse + build + otimizar
-      ├── src/utils/parsers.js       ← parse de cada CSV
-      ├── src/utils/business.js      ← buildClientes, validarRateios, otimizadorGlobal,
-      │                                carregamentoUG/demandaUG/capacidadeEfetivaUG,
-      │                                construirCenarioProposto, construirCenarioComOverrides,
-      │                                simularCenario, analisarCenario, projetarHorizonte
-      └── src/config.js              ← URLs, mapeamentos UG/UC, OPT_PARAMS
+src/hooks/useSheetData.js   ← fetch paralelo das 5 abas + parse + build + otimizar
+      ├── src/utils/parsers.js       ← parseSCAnalitico, parseFatAuri, parseInfoGerais,
+      │                                parseClientes, parseRDEquatorial
+      ├── src/utils/business.js      ← buildClientes, buildFinanceiro, validarRateios,
+      │                                otimizadorGlobal, carregamentoUG/demandaUG/
+      │                                capacidadeEfetivaUG, construirCenarioProposto,
+      │                                construirCenarioComOverrides, simularCenario,
+      │                                analisarCenario, projetarHorizonte
+      └── src/config.js              ← URLs (incl. rdEquatorial), mapeamentos UG/UC,
+                                       DADOS_FIXOS_AURI, CLASSE_POR_UG, OPT_PARAMS
       ▼
 src/App.jsx                 ← UI (React + Recharts + Tailwind/Auri)
-  ├── Visão Geral · UG Detalhe · Otimizador · Comparativo · Simulador · Clientes
-  └── modais: DetalheCliente (gráfico hist+projeção) · FormularioRateio (PDF Equatorial)
+  ├── Visão Geral · UG Detalhe · Otimizador · Comparativo · Simulador · Clientes · Panorama · LTV
+  └── modais: DetalheCliente (gráfico hist+projeção + seção Financeiro LTV) · FormularioRateio (PDF Equatorial)
 ```
 
 ---
@@ -219,13 +226,14 @@ Na seção 2 do formulário, a lista segue a regra regulatória por tipo de gera
 ```
 auri-dashboard/
 ├── src/
-│   ├── App.jsx              # UI completa (6 telas + 2 modais)
-│   ├── config.js            # URLs, UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
+│   ├── App.jsx              # UI completa (7 telas + 2 modais)
+│   ├── config.js            # URLs (5 abas), UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
 │   ├── hooks/useSheetData.js
 │   ├── utils/
-│   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador, cenários, projeções
+│   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador, cenários, projeções,
+│   │   │                        # buildFinanceiro (LTV — join R_D_Equatorial + Fatura Auri geradoras)
 │   │   ├── business.test.js     # 37 testes unitários de business.js (Vitest)
-│   │   ├── parsers.js           # parsers CSV
+│   │   ├── parsers.js           # parsers CSV (incl. parseRDEquatorial)
 │   │   ├── parsers.test.js      # 12 testes unitários de parsers.js (Vitest)
 │   │   ├── formularioRateio.js
 │   │   ├── pdfRateioGenerator.js
@@ -325,10 +333,34 @@ Agora os aliases conhecidos são mesclados por mês antes da montagem de `consum
 
 ---
 
+## Aba LTV — Análise Financeira
+
+`buildFinanceiro(clientes, transacoes, fatData)` em `business.js` enriquece cada cliente com:
+
+```js
+cliente.financeiro = {
+  receitaTotal, receitaPago, receitaPendente,   // cobranças Auri ao cliente
+  despesaTotal,  despesaPago,  despesaPendente,  // faturas Equatorial pagas pela Auri
+  ltv,     // receitaTotal − despesaTotal
+  ltvPago, // receitaPago  − despesaPago (impacto de caixa realizado)
+  transacoes,  // array bruto — usado em TelaLTV para filtros de período/UG
+}
+```
+
+**Join de UC:** `rdEquatorial` usava código antigo até mar/2025, novo a partir de abr/2025. `buildFinanceiro` tenta `uc_antiga` primeiro, depois `uc` (novo). Um cliente pode ter transações nos dois formatos — todas são consolidadas.
+
+**Receita implícita de geradoras:** após processar as transações do `rdEquatorial`, para cada UC Geradora verifica meses sem Receita explícita e injeta a `Fatura Auri (R$)` do `fatAuri` como `status: "Implícita"` — contabilizada em `receitaPago` (dividendo = recebido).
+
+**Ratio Rec/Desp:** exibido na coluna final da tabela LTV. Cores: verde ≥ 2×, âmbar 1–2×, vermelho < 1×.
+
+**Ordenação:** todos os headers clicáveis (Cliente, Receita, Despesa, LTV, Rec/Desp) com toggle ↓/↑ no segundo clique.
+
+---
+
 ## Mapeado para evolução futura
 
 - **Calibração contínua do CMC:** o `cmcBaseline` unificado já alimenta carregamento, otimizador, pulmão e status. Monitorar o efeito da winsorização nos limiares do otimizador conforme novos ciclos de faturamento forem adicionados.
 - Planejamento multi-período (estado-alvo em N meses).
 - Persistência de estado (localStorage) e histórico de ajustes aplicados.
-- Contexto financeiro (receita/custo por UG).
+- Automação pós-PDF: envio do formulário Equatorial por e-mail, escrita de volta na Auribase e criação de tarefa no ClickUp (ver detalhes internos).
 - Integração de escrita de volta ao Google Sheets.
