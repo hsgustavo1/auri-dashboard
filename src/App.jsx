@@ -438,32 +438,44 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
               </div>
             ))}
           </div>
-          {cliente.financeiro?.temDados && (
-            <div className="border border-stone-200 p-5 mb-5">
-              <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-4">Financeiro — LTV</h3>
-              <div className="grid grid-cols-3 gap-4">
-                {[
-                  ["Receita total",  cliente.financeiro.receitaTotal, "#2f7a52",
-                   `rec. ${fmtBRL(cliente.financeiro.receitaPago)}`,
-                   `pend. ${fmtBRL(cliente.financeiro.receitaPendente)}`],
-                  ["Despesa total",  cliente.financeiro.despesaTotal, "#a8482a",
-                   `pago ${fmtBRL(cliente.financeiro.despesaPago)}`,
-                   `pend. ${fmtBRL(cliente.financeiro.despesaPendente)}`],
-                  ["LTV", cliente.financeiro.ltv,
-                   cliente.financeiro.ltv >= 0 ? "#2f7a52" : "#a8482a",
-                   `caixa ${fmtBRL(cliente.financeiro.ltvPago)}`,
-                   `pend. ${fmtBRL(cliente.financeiro.ltv - cliente.financeiro.ltvPago)}`],
-                ].map(([label, valor, cor, sub1, sub2]) => (
-                  <div key={label} className="border-l-2 pl-3" style={{ borderColor: cor }}>
-                    <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{label}</div>
-                    <div className="text-xl font-mono font-bold" style={{ color: cor }}>{fmtBRL(valor)}</div>
-                    <div className="text-[10px] font-mono text-stone-500 mt-0.5">{sub1}</div>
-                    <div className="text-[10px] font-mono text-stone-400">{sub2}</div>
+          {cliente.financeiro?.temDados && (() => {
+            const totalKwh = (cliente.consumoArr || []).reduce((s, v) => s + (v != null ? v : 0), 0);
+            const rsPorKwh = totalKwh > 0 ? cliente.financeiro.ltv / totalKwh : null;
+            return (
+              <div className="border border-stone-200 p-5 mb-5">
+                <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-4">Financeiro — LTV</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {[
+                    ["Receita total",  cliente.financeiro.receitaTotal, "#2f7a52",
+                     `rec. ${fmtBRL(cliente.financeiro.receitaPago)}`,
+                     `pend. ${fmtBRL(cliente.financeiro.receitaPendente)}`],
+                    ["Despesa total",  cliente.financeiro.despesaTotal, "#a8482a",
+                     `pago ${fmtBRL(cliente.financeiro.despesaPago)}`,
+                     `pend. ${fmtBRL(cliente.financeiro.despesaPendente)}`],
+                    ["LTV", cliente.financeiro.ltv,
+                     cliente.financeiro.ltv >= 0 ? "#2f7a52" : "#a8482a",
+                     `caixa ${fmtBRL(cliente.financeiro.ltvPago)}`,
+                     `pend. ${fmtBRL(cliente.financeiro.ltv - cliente.financeiro.ltvPago)}`],
+                  ].map(([label, valor, cor, sub1, sub2]) => (
+                    <div key={label} className="border-l-2 pl-3" style={{ borderColor: cor }}>
+                      <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{label}</div>
+                      <div className="text-xl font-mono font-bold" style={{ color: cor }}>{fmtBRL(valor)}</div>
+                      <div className="text-[10px] font-mono text-stone-500 mt-0.5">{sub1}</div>
+                      <div className="text-[10px] font-mono text-stone-400">{sub2}</div>
+                    </div>
+                  ))}
+                  <div className="border-l-2 pl-3" style={{ borderColor: rsPorKwh != null ? (rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89" }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">R$/kWh</div>
+                    <div className="text-xl font-mono font-bold" style={{ color: rsPorKwh != null ? (rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89" }}>
+                      {rsPorKwh != null ? `R$ ${rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "—"}
+                    </div>
+                    <div className="text-[10px] font-mono text-stone-500 mt-0.5">{totalKwh > 0 ? `${totalKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh` : ""}</div>
+                    <div className="text-[10px] font-mono text-stone-400">histórico completo</div>
                   </div>
-                ))}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {chartData.some(d => d.saldoHist != null || d.projAtual != null) && (
             <div className="border border-stone-200 p-5 mb-5">
@@ -2499,16 +2511,25 @@ function TelaLTV({ clientes, onClickCliente }) {
           pc.despesaTotal += t.valor;
         }
       });
+
+      // kWh consumido pelo cliente no período (consumoArr alinhado com c.meses)
+      pc.consumoKwh = (c.meses || []).reduce((sum, mes, i) => {
+        if (!dentroDoPeriodo(mes)) return sum;
+        if (filtroUG !== "todas" && c.ug !== filtroUG) return sum;
+        const v = c.consumoArr?.[i];
+        return sum + (v != null ? v : 0);
+      }, 0);
     });
 
     const dadosGrafico = Object.values(porMes).sort((a, b) => comparaMes(a.mes, b.mes));
-    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", ratio: "ratio" };
+    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", ratio: "ratio", rspkwh: "rsPorKwh" };
     const dadosTabela  = Object.values(porCliente)
       .map(r => ({
         ...r,
-        ltv:   r.receitaTotal - r.despesaTotal,
-        ltvPago: r.receitaPago - r.despesaPago,
-        ratio: r.despesaTotal > 0 ? r.receitaTotal / r.despesaTotal : null,
+        ltv:      r.receitaTotal - r.despesaTotal,
+        ltvPago:  r.receitaPago  - r.despesaPago,
+        ratio:    r.despesaTotal > 0 ? r.receitaTotal / r.despesaTotal : null,
+        rsPorKwh: r.consumoKwh > 0 ? (r.receitaTotal - r.despesaTotal) / r.consumoKwh : null,
       }))
       .sort((a, b) => {
         const mul = ord.dir === "desc" ? -1 : 1;
@@ -2519,12 +2540,14 @@ function TelaLTV({ clientes, onClickCliente }) {
       });
 
     const totais = dadosTabela.reduce((acc, r) => {
-      acc.receita += r.receitaTotal;
-      acc.despesa += r.despesaTotal;
-      acc.ltv     += r.ltv;
+      acc.receita   += r.receitaTotal;
+      acc.despesa   += r.despesaTotal;
+      acc.ltv       += r.ltv;
+      acc.consumoKwh += r.consumoKwh || 0;
       return acc;
-    }, { receita: 0, despesa: 0, ltv: 0 });
-    totais.ratio = totais.despesa > 0 ? totais.receita / totais.despesa : null;
+    }, { receita: 0, despesa: 0, ltv: 0, consumoKwh: 0 });
+    totais.ratio    = totais.despesa   > 0 ? totais.receita    / totais.despesa    : null;
+    totais.rsPorKwh = totais.consumoKwh > 0 ? totais.ltv / totais.consumoKwh : null;
 
     return { dadosGrafico, dadosTabela, totais };
   }, [clientes, periodoInicio, periodoFim, filtroUG, ord]);
@@ -2548,6 +2571,29 @@ function TelaLTV({ clientes, onClickCliente }) {
       <div className="mb-6">
         <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>LTV por Cliente</h2>
         <p className="text-xs text-stone-600">Receita (cobranças ao cliente) − Despesa (faturas Equatorial pagas pela Auri). Filtros aplicam-se ao gráfico e à tabela.</p>
+      </div>
+
+      {/* Painel global da empresa */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        {[
+          ["Receita total", totais.receita, "#2f7a52"],
+          ["Despesa total", totais.despesa, "#a8482a"],
+          ["LTV total",     totais.ltv,     totais.ltv >= 0 ? "#2f7a52" : "#a8482a"],
+          ["R$/kWh global", totais.rsPorKwh != null ? totais.rsPorKwh : null, totais.rsPorKwh != null ? (totais.rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89"],
+        ].map(([label, valor, cor]) => (
+          <div key={label} className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
+            <div className="text-2xl font-extrabold tracking-tight font-mono" style={{ color: cor }}>
+              {valor == null ? "—"
+                : label === "R$/kWh global"
+                  ? `${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
+                  : fmtBRL(valor)}
+            </div>
+            {label === "R$/kWh global" && totais.consumoKwh > 0 && (
+              <div className="text-[10px] text-stone-500 font-mono mt-1">{totais.consumoKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh entregues</div>
+            )}
+          </div>
+        ))}
       </div>
 
       {/* Filtros */}
@@ -2614,6 +2660,7 @@ function TelaLTV({ clientes, onClickCliente }) {
                   [null,      "Pago / Pend.", "right"],
                   ["ltv",     "LTV",          "right"],
                   ["ratio",   "Rec/Desp",     "right"],
+                  ["rspkwh",  "R$/kWh",       "right"],
                 ].map(([sortCol, label, align], i) => {
                   const ativo = sortCol && ord.col === sortCol;
                   const seta = ativo ? (ord.dir === "desc" ? " ↓" : " ↑") : (sortCol ? " ↕" : "");
@@ -2635,8 +2682,9 @@ function TelaLTV({ clientes, onClickCliente }) {
               </tr>
             </thead>
             <tbody>
-              {dadosTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, ratio }, i) => {
-                const ratioCor = ratio == null ? "#a89e89" : ratio >= 2 ? "#2f7a52" : ratio >= 1 ? "#c98a1f" : "#a8482a";
+              {dadosTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, ratio, rsPorKwh, consumoKwh }, i) => {
+                const ratioCor  = ratio    == null ? "#a89e89" : ratio >= 2 ? "#2f7a52" : ratio >= 1 ? "#c98a1f" : "#a8482a";
+                const kwCor     = rsPorKwh == null ? "#a89e89" : rsPorKwh >= 0 ? "#2f6690" : "#a8482a";
                 return (
                   <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
                     <td className="px-3 py-2.5">
@@ -2660,6 +2708,11 @@ function TelaLTV({ clientes, onClickCliente }) {
                     <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ratioCor }}>
                       {ratio != null ? ratio.toFixed(2).replace(".", ",") + "×" : "—"}
                     </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: kwCor }}>
+                      {rsPorKwh != null
+                        ? `R$ ${rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
+                        : "—"}
+                    </td>
                   </tr>
                 );
               })}
@@ -2675,6 +2728,11 @@ function TelaLTV({ clientes, onClickCliente }) {
                   <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ltv >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totais.ltv)}</td>
                   <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ratio != null ? (totais.ratio >= 2 ? "#2f7a52" : totais.ratio >= 1 ? "#c98a1f" : "#a8482a") : "#a89e89" }}>
                     {totais.ratio != null ? totais.ratio.toFixed(2).replace(".", ",") + "×" : "—"}
+                  </td>
+                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.rsPorKwh != null ? (totais.rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89" }}>
+                    {totais.rsPorKwh != null
+                      ? `R$ ${totais.rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
+                      : "—"}
                   </td>
                 </tr>
               </tfoot>
