@@ -1200,3 +1200,68 @@ export function analisarCenario(cenario, n = 6) {
 
   return { distAtual, distProposta, pulmaoAtual, pulmaoProposto, riscos, horizonte: n };
 }
+
+// ─── buildFinanceiro ─────────────────────────────────────────
+// Enriquece cada cliente com dados financeiros de receitas e despesas.
+// Recebe o array de transações de parseRDEquatorial e muta clientes in-place.
+export function buildFinanceiro(clientes, transacoes, fatData = {}) {
+  // Lookup por uc (novo) e uc_antiga (antigo) → mesmo cliente
+  const lookup = {};
+  clientes.forEach(c => {
+    if (c.uc)        lookup[c.uc]        = c;
+    if (c.uc_antiga) lookup[c.uc_antiga] = c;
+  });
+
+  clientes.forEach(c => {
+    c.financeiro = {
+      receitaTotal: 0, receitaPago: 0, receitaPendente: 0,
+      despesaTotal: 0, despesaPago: 0, despesaPendente: 0,
+      transacoes: [],
+    };
+  });
+
+  transacoes.forEach(t => {
+    const c = lookup[t.uc];
+    if (!c) return;
+    const f = c.financeiro;
+    const pago = t.tipo === "Receita" ? t.status === "Recebido" : t.status === "Pago";
+    if (t.tipo === "Receita") {
+      f.receitaTotal += t.valor;
+      pago ? (f.receitaPago += t.valor) : (f.receitaPendente += t.valor);
+    } else {
+      f.despesaTotal += t.valor;
+      pago ? (f.despesaPago += t.valor) : (f.despesaPendente += t.valor);
+    }
+    f.transacoes.push(t);
+  });
+
+  // Para UCs Geradoras: injeta "Fatura Auri (R$)" como receita implícita
+  // nos meses em que não há Receita registrada no R_D_Equatorial.
+  // O valor representa o dividendo compensado — sem saída de caixa, mas é receita real.
+  clientes.forEach(c => {
+    if (!c.ehUCGeradora) return;
+    const f = c.financeiro;
+    const mesesComReceita = new Set(
+      f.transacoes.filter(t => t.tipo === "Receita").map(t => t.mes)
+    );
+    // BD_FatAuri pode usar UC antiga ou nova como chave
+    const fatUC = fatData[c.uc_antiga] || fatData[c.uc] || {};
+    Object.entries(fatUC).forEach(([mes, { faturaAuri }]) => {
+      if (!faturaAuri || faturaAuri <= 0) return;
+      if (mesesComReceita.has(mes)) return;
+      const t = { uc: c.uc_antiga || c.uc, tipo: "Receita", mes, valor: faturaAuri, status: "Implícita", ug: c.ug };
+      f.transacoes.push(t);
+      f.receitaTotal += faturaAuri;
+      f.receitaPago  += faturaAuri; // dividendo = recebido
+    });
+  });
+
+  clientes.forEach(c => {
+    const f = c.financeiro;
+    f.ltv      = f.receitaTotal - f.despesaTotal;
+    f.ltvPago  = f.receitaPago  - f.despesaPago;
+    f.temDados = f.receitaTotal > 0 || f.despesaTotal > 0;
+  });
+
+  return clientes;
+}

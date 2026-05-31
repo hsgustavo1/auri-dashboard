@@ -68,8 +68,9 @@ export function parseFatAuri(text) {
     if (!uc || !mes) return;
     if (!data[uc]) data[uc] = {};
     data[uc][mes] = {
-      consumo: parseBR(r["Consumo"]),
-      saldo: parseBR(r["Saldo de Créditos"]),
+      consumo:     parseBR(r["Consumo"]),
+      saldo:       parseBR(r["Saldo de Créditos"]),
+      faturaAuri:  parseBR(r["Fatura Auri (R$)"]) || 0,
     };
   });
   return data;
@@ -102,6 +103,22 @@ function pickField(row, ...candidates) {
     if (v != null && String(v).trim() !== "") return String(v).trim();
   }
   return "";
+}
+
+export function parseRDEquatorial(text) {
+  const rows = parseCSV(text);
+  return rows
+    .map(r => {
+      const uc    = (r["Unidade Consumidora"] || "").trim();
+      const tipo  = (r["Tipo"] || "").trim();
+      const mes   = (r["Mês/Ano"] || "").trim();
+      const valor = parseBR(r["Valor"]) ?? 0;
+      const status = (r["Status"] || "").trim();
+      const ug    = (r["Unidade Geradora"] || "").trim();
+      if (!uc || !tipo || !mes) return null;
+      return { uc, tipo, mes, valor, status, ug };
+    })
+    .filter(Boolean);
 }
 
 export function parseClientes(text) {

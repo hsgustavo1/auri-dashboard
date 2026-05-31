@@ -17,6 +17,12 @@ import { Edit3, RotateCcw, Plus, X, Zap } from "lucide-react";
 import { UG_NOMES } from "./config";
 import FormularioRateio from "./components/FormularioRateio";
 
+// ─── Helpers ─────────────────────────────────────────────────
+function fmtBRL(v) {
+  if (v == null) return "—";
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 // ─── UI Atoms ────────────────────────────────────────────────
 function NavBtn({ ativo, onClick, children }) {
   return (
@@ -432,6 +438,33 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
               </div>
             ))}
           </div>
+          {cliente.financeiro?.temDados && (
+            <div className="border border-stone-200 p-5 mb-5">
+              <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-4">Financeiro — LTV</h3>
+              <div className="grid grid-cols-3 gap-4">
+                {[
+                  ["Receita total",  cliente.financeiro.receitaTotal, "#2f7a52",
+                   `rec. ${fmtBRL(cliente.financeiro.receitaPago)}`,
+                   `pend. ${fmtBRL(cliente.financeiro.receitaPendente)}`],
+                  ["Despesa total",  cliente.financeiro.despesaTotal, "#a8482a",
+                   `pago ${fmtBRL(cliente.financeiro.despesaPago)}`,
+                   `pend. ${fmtBRL(cliente.financeiro.despesaPendente)}`],
+                  ["LTV", cliente.financeiro.ltv,
+                   cliente.financeiro.ltv >= 0 ? "#2f7a52" : "#a8482a",
+                   `caixa ${fmtBRL(cliente.financeiro.ltvPago)}`,
+                   `pend. ${fmtBRL(cliente.financeiro.ltv - cliente.financeiro.ltvPago)}`],
+                ].map(([label, valor, cor, sub1, sub2]) => (
+                  <div key={label} className="border-l-2 pl-3" style={{ borderColor: cor }}>
+                    <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{label}</div>
+                    <div className="text-xl font-mono font-bold" style={{ color: cor }}>{fmtBRL(valor)}</div>
+                    <div className="text-[10px] font-mono text-stone-500 mt-0.5">{sub1}</div>
+                    <div className="text-[10px] font-mono text-stone-400">{sub2}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {chartData.some(d => d.saldoHist != null || d.projAtual != null) && (
             <div className="border border-stone-200 p-5 mb-5">
               <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
@@ -2386,6 +2419,273 @@ function TelaPanorama({ ugsValidadas, onVerUG }) {
   );
 }
 
+// ─── TelaLTV ─────────────────────────────────────────────────
+function parseMesAno(s) {
+  // "MM/YYYY" → Date para ordenação
+  const [m, y] = s.split("/");
+  return new Date(+y, +m - 1, 1);
+}
+
+function comparaMes(a, b) {
+  return parseMesAno(a) - parseMesAno(b);
+}
+
+function TelaLTV({ clientes, onClickCliente }) {
+  // Coleta todos os Mês/Ano únicos presentes nas transações de qualquer cliente
+  const mesOptions = useMemo(() => {
+    const set = new Set();
+    clientes.forEach(c => c.financeiro?.transacoes?.forEach(t => set.add(t.mes)));
+    return [...set].sort(comparaMes);
+  }, [clientes]);
+
+  const [periodoInicio, setPeriodoInicio] = useState(() => mesOptions[0] ?? "");
+  const [periodoFim,    setPeriodoFim   ] = useState(() => mesOptions.at(-1) ?? "");
+  const [filtroUG, setFiltroUG] = useState("todas");
+  const [ord, setOrd] = useState({ col: "ltv", dir: "desc" });
+  const handleSort = (col) => setOrd(prev =>
+    prev.col === col
+      ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
+      : { col, dir: "desc" }
+  );
+
+  // Atualiza defaults quando os dados chegam
+  const inicioPadrao = mesOptions[0] ?? "";
+  const fimPadrao    = mesOptions.at(-1) ?? "";
+
+  // Filtra e agrega
+  const { dadosGrafico, dadosTabela, totais } = useMemo(() => {
+    const dentroDoPeriodo = (mes) => {
+      if (!periodoInicio && !periodoFim) return true;
+      const d = parseMesAno(mes);
+      if (periodoInicio && d < parseMesAno(periodoInicio)) return false;
+      if (periodoFim    && d > parseMesAno(periodoFim))    return false;
+      return true;
+    };
+
+    // Agrega por mês (para o gráfico)
+    const porMes = {};
+    // Agrega por cliente (para a tabela)
+    const porCliente = {};
+
+    clientes.forEach(c => {
+      if (!c.financeiro?.temDados) return;
+      const ts = (c.financeiro.transacoes || []).filter(t => {
+        if (!dentroDoPeriodo(t.mes)) return false;
+        if (filtroUG !== "todas" && t.ug !== filtroUG) return false;
+        return true;
+      });
+      if (!ts.length) return;
+
+      if (!porCliente[c.uc]) {
+        porCliente[c.uc] = {
+          cliente: c,
+          receitaTotal: 0, receitaPago: 0, receitaPendente: 0,
+          despesaTotal: 0, despesaPago: 0, despesaPendente: 0,
+        };
+      }
+      const pc = porCliente[c.uc];
+
+      ts.forEach(t => {
+        if (!porMes[t.mes]) {
+          porMes[t.mes] = { mes: t.mes, receitaPago: 0, receitaPendente: 0, despesaPago: 0, despesaPendente: 0 };
+        }
+        const pm = porMes[t.mes];
+        const pago = t.tipo === "Receita" ? (t.status === "Recebido" || t.status === "Implícita") : t.status === "Pago";
+        if (t.tipo === "Receita") {
+          pago ? (pm.receitaPago += t.valor, pc.receitaPago += t.valor) : (pm.receitaPendente += t.valor, pc.receitaPendente += t.valor);
+          pc.receitaTotal += t.valor;
+        } else {
+          pago ? (pm.despesaPago += t.valor, pc.despesaPago += t.valor) : (pm.despesaPendente += t.valor, pc.despesaPendente += t.valor);
+          pc.despesaTotal += t.valor;
+        }
+      });
+    });
+
+    const dadosGrafico = Object.values(porMes).sort((a, b) => comparaMes(a.mes, b.mes));
+    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", ratio: "ratio" };
+    const dadosTabela  = Object.values(porCliente)
+      .map(r => ({
+        ...r,
+        ltv:   r.receitaTotal - r.despesaTotal,
+        ltvPago: r.receitaPago - r.despesaPago,
+        ratio: r.despesaTotal > 0 ? r.receitaTotal / r.despesaTotal : null,
+      }))
+      .sort((a, b) => {
+        const mul = ord.dir === "desc" ? -1 : 1;
+        if (ord.col === "nome") return mul * a.cliente.nome.localeCompare(b.cliente.nome);
+        const key = SORT_KEY[ord.col] || "ltv";
+        const va = a[key] ?? -Infinity, vb = b[key] ?? -Infinity;
+        return mul * (va - vb);
+      });
+
+    const totais = dadosTabela.reduce((acc, r) => {
+      acc.receita += r.receitaTotal;
+      acc.despesa += r.despesaTotal;
+      acc.ltv     += r.ltv;
+      return acc;
+    }, { receita: 0, despesa: 0, ltv: 0 });
+    totais.ratio = totais.despesa > 0 ? totais.receita / totais.despesa : null;
+
+    return { dadosGrafico, dadosTabela, totais };
+  }, [clientes, periodoInicio, periodoFim, filtroUG, ord]);
+
+  const ugNomes = useMemo(() => {
+    const set = new Set();
+    clientes.forEach(c => c.financeiro?.transacoes?.forEach(t => { if (t.ug) set.add(t.ug); }));
+    return [...set].sort();
+  }, [clientes]);
+
+  if (!mesOptions.length) {
+    return (
+      <div className="py-16 text-center text-stone-600 text-sm">
+        Nenhum dado financeiro carregado.
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>LTV por Cliente</h2>
+        <p className="text-xs text-stone-600">Receita (cobranças ao cliente) − Despesa (faturas Equatorial pagas pela Auri). Filtros aplicam-se ao gráfico e à tabela.</p>
+      </div>
+
+      {/* Filtros */}
+      <div className="mb-6 flex flex-wrap gap-3 items-end">
+        <div>
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">De</label>
+          <select value={periodoInicio || inicioPadrao} onChange={e => setPeriodoInicio(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            {mesOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Até</label>
+          <select value={periodoFim || fimPadrao} onChange={e => setPeriodoFim(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            {mesOptions.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">UG</label>
+          <select value={filtroUG} onChange={e => setFiltroUG(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            <option value="todas">Todas</option>
+            {ugNomes.map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </div>
+        <div className="ml-auto pb-2 text-xs text-stone-600 font-mono">{dadosTabela.length} clientes com dados</div>
+      </div>
+
+      {/* Gráfico */}
+      {dadosGrafico.length > 0 && (
+        <div className="border border-stone-200 bg-white shadow-auri-sm p-5 mb-6">
+          <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-1">Receita e Despesa por Mês</h3>
+          <p className="text-[10px] text-stone-600 mb-4">Barras sólidas = valores pagos/recebidos · barras claras = pendentes</p>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={dadosGrafico} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+              <XAxis dataKey="mes" stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
+              <YAxis stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
+              <Tooltip
+                contentStyle={{ backgroundColor: "#f5efe2", border: "1px solid #e2dbcc", fontSize: 12 }}
+                labelStyle={{ color: "#1a1812" }}
+                formatter={(v, name) => [fmtBRL(v), name]}
+              />
+              <Legend wrapperStyle={{ fontSize: 11, color: "#6b6357", paddingTop: 8 }} />
+              <Bar dataKey="receitaPago"      stackId="r" fill="#2f7a52" name="Receita recebida" />
+              <Bar dataKey="receitaPendente"  stackId="r" fill="#a3d5b8" name="Receita pendente" />
+              <Bar dataKey="despesaPago"      stackId="d" fill="#a8482a" name="Despesa paga" />
+              <Bar dataKey="despesaPendente"  stackId="d" fill="#e8b4a0" name="Despesa pendente" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Tabela */}
+      <div className="border border-stone-200 bg-white shadow-auri-sm">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-bone border-b border-stone-200">
+                {/* Colunas sortáveis: chave de sort + label. null = não sortável */}
+                {[
+                  ["nome",    "Cliente",      "left"],
+                  [null,      "UG",           "left"],
+                  ["receita", "Receita",      "right"],
+                  [null,      "Pago / Pend.", "right"],
+                  ["despesa", "Despesa",      "right"],
+                  [null,      "Pago / Pend.", "right"],
+                  ["ltv",     "LTV",          "right"],
+                  ["ratio",   "Rec/Desp",     "right"],
+                ].map(([sortCol, label, align], i) => {
+                  const ativo = sortCol && ord.col === sortCol;
+                  const seta = ativo ? (ord.dir === "desc" ? " ↓" : " ↑") : (sortCol ? " ↕" : "");
+                  return (
+                    <th key={i} className={`px-3 py-3 text-[10px] uppercase tracking-[0.18em] font-normal whitespace-nowrap ${align === "right" ? "text-right" : "text-left"}`}>
+                      {sortCol ? (
+                        <button
+                          onClick={() => handleSort(sortCol)}
+                          className={`hover:text-stone-800 transition-colors ${ativo ? "text-stone-800" : "text-stone-600"}`}
+                        >
+                          {label}<span className="text-stone-400">{seta}</span>
+                        </button>
+                      ) : (
+                        <span className="text-stone-600">{label}</span>
+                      )}
+                    </th>
+                  );
+                })}
+              </tr>
+            </thead>
+            <tbody>
+              {dadosTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, ratio }, i) => {
+                const ratioCor = ratio == null ? "#a89e89" : ratio >= 2 ? "#2f7a52" : ratio >= 1 ? "#c98a1f" : "#a8482a";
+                return (
+                  <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
+                    <td className="px-3 py-2.5">
+                      <div className="text-stone-800 truncate max-w-[180px]">{cliente.nome}</div>
+                      <div className="text-[10px] text-stone-600 font-mono">{cliente.uc}</div>
+                    </td>
+                    <td className="px-3 py-2.5 text-xs text-stone-600 whitespace-nowrap">{cliente.ug || "—"}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-[#2f7a52] whitespace-nowrap">{fmtBRL(receitaTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-[10px] whitespace-nowrap">
+                      <span className="text-stone-600">{fmtBRL(receitaPago)}</span>
+                      {receitaPendente > 0 && <span className="text-stone-400"> / {fmtBRL(receitaPendente)}</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono text-[#a8482a] whitespace-nowrap">{fmtBRL(despesaTotal)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono text-[10px] whitespace-nowrap">
+                      <span className="text-stone-600">{fmtBRL(despesaPago)}</span>
+                      {despesaPendente > 0 && <span className="text-stone-400"> / {fmtBRL(despesaPendente)}</span>}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ltv >= 0 ? "#2f7a52" : "#a8482a" }}>
+                      {fmtBRL(ltv)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ratioCor }}>
+                      {ratio != null ? ratio.toFixed(2).replace(".", ",") + "×" : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            {dadosTabela.length > 1 && (
+              <tfoot>
+                <tr className="border-t-2 border-stone-200 bg-bone">
+                  <td colSpan={2} className="px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] text-stone-600">Total do período</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-bold text-[#2f7a52]">{fmtBRL(totais.receita)}</td>
+                  <td />
+                  <td className="px-3 py-2.5 text-right font-mono font-bold text-[#a8482a]">{fmtBRL(totais.despesa)}</td>
+                  <td />
+                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ltv >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totais.ltv)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ratio != null ? (totais.ratio >= 2 ? "#2f7a52" : totais.ratio >= 1 ? "#c98a1f" : "#a8482a") : "#a89e89" }}>
+                    {totais.ratio != null ? totais.ratio.toFixed(2).replace(".", ",") + "×" : "—"}
+                  </td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { data, loading, error, refresh, lastUpdated } = useSheetData();
   const [aba, setAba] = useState("overview");
@@ -2474,6 +2774,7 @@ export default function App() {
             </NavBtn>
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
             <NavBtn ativo={aba === "panorama"} onClick={() => setAba("panorama")}>Panorama</NavBtn>
+            <NavBtn ativo={aba === "ltv"} onClick={() => setAba("ltv")}>LTV</NavBtn>
           </div>
         </div>
       </header>
@@ -2554,6 +2855,10 @@ export default function App() {
 
         {aba === "panorama" && (
           <TelaPanorama ugsValidadas={ugsValidadas} onVerUG={handleVerUG} />
+        )}
+
+        {aba === "ltv" && (
+          <TelaLTV clientes={clientes} onClickCliente={setClienteSel} />
         )}
       </main>
 
