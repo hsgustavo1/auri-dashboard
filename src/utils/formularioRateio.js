@@ -29,16 +29,18 @@ function checkboxesAcao(linhas) {
   };
 }
 
-// Divide as beneficiárias (apenas % > 0, sem a UC geradora) em páginas de 10.
+// Divide as UCs participantes com % > 0 em páginas de 10.
+// GD1: inclui a UC geradora, pois ela participa normalmente do rateio.
+// GD2: exclui a UC geradora, pois ela autoconsome antes da distribuição.
 // Ordena por % decrescente; em empate, nome alfabético.
 //
-// CNPJ: todas as UCs beneficiárias pertencem a subsidiárias da Auri Energia
+// CNPJ: todas as UCs participantes pertencem à Auri Energia
 // LTDA — por isso o CNPJ é SEMPRE o mesmo (48.102.050/0001-06), idêntico ao
 // da titular. UC: usa o código novo (cliente.uc no formato X.XXX.XXX-XX),
 // caindo para uc_antiga só se uc estiver vazio.
-function paginarBeneficiarias(linhas) {
-  const beneficiarias = linhas
-    .filter(l => !l.cliente.ehUCGeradora && l.rateioProposto > 0)
+function paginarParticipantes(linhas, tipoGd) {
+  const participantes = linhas
+    .filter(l => l.rateioProposto > 0 && (!l.cliente.ehUCGeradora || tipoGd === "GD1"))
     .map(l => ({
       uc:       l.cliente.uc || l.cliente.uc_antiga || "",
       nome:     l.cliente.nome || "",
@@ -47,10 +49,10 @@ function paginarBeneficiarias(linhas) {
     }))
     .sort((a, b) => (b.pct - a.pct) || a.nome.localeCompare(b.nome));
 
-  if (beneficiarias.length === 0) return [[]];
+  if (participantes.length === 0) return [[]];
   const paginas = [];
-  for (let i = 0; i < beneficiarias.length; i += UCS_POR_PAGINA) {
-    paginas.push(beneficiarias.slice(i, i + UCS_POR_PAGINA));
+  for (let i = 0; i < participantes.length; i += UCS_POR_PAGINA) {
+    paginas.push(participantes.slice(i, i + UCS_POR_PAGINA));
   }
   return paginas;
 }
@@ -104,7 +106,7 @@ export function montarFormularioRateio(ug, cenario, clientes) {
   };
 
   const acao = checkboxesAcao(cenario.linhas);
-  const paginas = paginarBeneficiarias(cenario.linhas);
+  const paginas = paginarParticipantes(cenario.linhas, ug.tipo);
 
   return {
     ug_nome:     ug.nome,

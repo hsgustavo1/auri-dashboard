@@ -207,6 +207,11 @@ Distribuição de saúde atual vs projetada em N meses, pulmão coletivo e risco
 ### Formulário Equatorial (PDF)
 `FormularioRateio.jsx` + `pdfRateioGenerator.js` (pdf-lib) geram o formulário oficial pré-preenchido a partir do cenário proposto. Titular e CNPJ fixos da Auri Energia LTDA; código da UC no formato novo. Detalhes em `docs/handoff-formulario-rateio-equatorial.md`.
 
+Na seção 2 do formulário, a lista segue a regra regulatória por tipo de geração:
+
+- **GD1:** inclui a UC geradora e as beneficiárias com `rateioProposto > 0`; a geradora participa normalmente do rateio.
+- **GD2:** inclui somente as beneficiárias com `rateioProposto > 0`; a geradora autoconsome antes da distribuição e permanece fora da lista.
+
 ---
 
 ## Estrutura de Arquivos
@@ -239,7 +244,7 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
-npm test           # testes unitários (Vitest) — 50 testes
+npm test           # testes unitários (Vitest) — 52 testes
 npm run lint       # análise estática (ESLint)
 npm run test:watch # modo watch para desenvolvimento
 ```
