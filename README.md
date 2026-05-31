@@ -79,6 +79,14 @@ O mesmo `cmc` é usado em todas as telas e cálculos: carregamento, otimizador, 
 
 Campo auxiliar: `cmcRecente` (média dos últimos N meses) e `emRecuperacao` (`cmcRecente < PARADO_FRAC × cmc`) — base da sinalização **"parado"** (ver Estágio 4).
 
+### Renumeração de UC — histórico consolidado
+
+A partir de maio/2026, a Equatorial alterou o padrão de numeração das UCs. Uma mesma unidade pode ter faturamento histórico registrado parte no código antigo e parte no código novo.
+
+`parseSCAnalitico` indexa cada linha pelos dois códigos disponíveis. Em seguida, `buildClientes` consolida os registros de `fatAuri` encontrados por `uc_antiga`, `uc_nova` e UC atual antes de montar `consumoArr`.
+
+Essa consolidação ocorre antes dos cálculos derivados. Portanto, gráfico de consumo real, `cmc`, `cmcRecente`, status, pulmão, carregamento, otimizador e projeções usam a série mensal completa mesmo após a troca de número.
+
 ### Status de saldo
 
 Aplicado a **todos os clientes e geradoras GD1**. Geradoras GD2 exibem status fixo "UC Geradora" (saldo travado, sem ação possível).
@@ -231,7 +239,8 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
-npm test           # testes unitários (Vitest) — 49 testes
+npm test           # testes unitários (Vitest) — 50 testes
+npm run lint       # análise estática (ESLint)
 npm run test:watch # modo watch para desenvolvimento
 ```
 
@@ -292,6 +301,12 @@ const num = (x) => { const n = parseFloat(x); return Number.isNaN(n) ? null : n;
 
 Agora `"0"` → `0` (plota o ponto em zero); `""` / `"Sem Fatura"` → `null` (sem ponto).
 
+### Bug corrigido: consumo interrompido após renumeração da UC (`business.js`)
+
+`buildClientes` selecionava apenas um bloco de faturamento: `fatData[ucAntiga] || fatData[ucAtual]`. Quando a Equatorial atualizou o número da UC, os meses registrados no segundo código eram descartados.
+
+Agora os aliases conhecidos são mesclados por mês antes da montagem de `consumoArr`. O teste de regressão cobre a transição UC antiga → UC nova e verifica também o `cmc` calculado sobre a série consolidada.
+
 ---
 
 ## Decisões de Design
@@ -307,7 +322,7 @@ Agora `"0"` → `0` (plota o ponto em zero); `""` / `"Sem Fatura"` → `null` (s
 
 ## Mapeado para evolução futura
 
-- **Robustez a outliers no carregamento:** hoje a winsorização está só no `cmcBaseline` (pulmão/status). O `cmcEfetivo` (carregamento/otimizador) usa a fórmula original, sem aparar outliers — feito de propósito para não re-deslocar o otimizador calibrado. Aplicar robustez também no carregamento exigiria re-calibrar os limiares do otimizador.
+- **Calibração contínua do CMC:** o `cmcBaseline` unificado já alimenta carregamento, otimizador, pulmão e status. Monitorar o efeito da winsorização nos limiares do otimizador conforme novos ciclos de faturamento forem adicionados.
 - Planejamento multi-período (estado-alvo em N meses).
 - Persistência de estado (localStorage) e histórico de ajustes aplicados.
 - Contexto financeiro (receita/custo por UG).

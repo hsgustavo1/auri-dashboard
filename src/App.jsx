@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { RefreshCw, FileText } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
@@ -90,7 +90,6 @@ function BannerValidacao({ ugs }) {
 // ─── CardUG ──────────────────────────────────────────────────
 function CardUG({ ug, onClick }) {
   const cap = ug.capacidade_kwh || 0;
-  const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || 0), 0);
   const car = carregamentoUG(ug.clientes, ug);
   const corCar = car < 85 ? "#c98a1f" : car > 105 ? "#a8482a" : "#2f7a52";
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
@@ -488,12 +487,13 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
 }
 
 // ─── TabelaClientes ──────────────────────────────────────────
+const ORDEM_STATUS = { critico: 0, baixo: 1, excessivo: 2, alto: 3, ideal: 4, geradora: 5, sem_dados: 6 };
+
 function TabelaClientes({ clientes, onClickCliente }) {
   const [filtroUG, setFiltroUG] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [busca, setBusca] = useState("");
   const [ord, setOrd] = useState("status");
-  const ordemMap = { critico: 0, baixo: 1, excessivo: 2, alto: 3, ideal: 4, geradora: 5, sem_dados: 6 };
 
   const lista = useMemo(() => {
     let r = clientes.filter(c => {
@@ -503,7 +503,7 @@ function TabelaClientes({ clientes, onClickCliente }) {
       if (busca && !c.nome.toLowerCase().includes(busca.toLowerCase()) && !c.uc.includes(busca)) return false;
       return true;
     });
-    if (ord === "status") r.sort((a, b) => (ordemMap[a.status.nivel] - ordemMap[b.status.nivel]) || (b.saldo - a.saldo));
+    if (ord === "status") r.sort((a, b) => (ORDEM_STATUS[a.status.nivel] - ORDEM_STATUS[b.status.nivel]) || (b.saldo - a.saldo));
     else if (ord === "saldo_d") r.sort((a, b) => b.saldo - a.saldo);
     else if (ord === "saldo_a") r.sort((a, b) => a.saldo - b.saldo);
     else if (ord === "razao") r.sort((a, b) => b.status.razao - a.status.razao);
@@ -762,8 +762,6 @@ function TelaOtimizador({ ugsValidadas, planoGlobal, onVerUG, onClickCliente }) 
           const plUG = planoGlobal.por_ug[ug.nome];
           const reals = planoGlobal.realocar.filter(r => r.ug_origem === ug.nome || r.ug_destino === ug.nome);
           const nAjustes = plUG?.acoes?.length || 0;
-          const cap = ug.capacidade_kwh || 0;
-          const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || c.cmc || 0), 0);
           const car = carregamentoUG(ug.clientes, ug);
           const corCar = car < 95 ? "#c98a1f" : car > 105 ? "#a8482a" : "#2f7a52";
           return (
@@ -1146,35 +1144,26 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
           </div>
           <span className="font-mono text-xs text-stone-400 w-10 text-right">{rateioAtual}%</span>
         </div>
-        {!ehGeradora && (
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">consome</span>
-            <div className="flex-1">
-              <BarraComparativa pct={consome} maxPct={maxPct} cor={corConsome} fantasma={estado === "entrando"} />
-            </div>
-            <span className="font-mono text-xs w-10 text-right" style={{ color: corConsome }}>{consome.toFixed(1).replace(".", ",")}%</span>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">consome</span>
+          <div className="flex-1">
+            <BarraComparativa pct={consome} maxPct={maxPct} cor={corConsome} fantasma={estado === "entrando"} />
           </div>
-        )}
-        {/* Metadados do cliente: CMC + pulmão atual */}
-        {!ehGeradora && (
-          <div className="flex items-center gap-2 text-[10px] font-mono pl-px">
-            <span className="text-stone-600">CMC <span className="text-stone-600">{cmc.toFixed(0)}</span></span>
-            {pulmaoFmt && (
-              <>
-                <span className="text-stone-700">·</span>
-                <span style={{ color: pulmaoFmt.cor }}>{pulmaoFmt.label}</span>
-              </>
-            )}
-          </div>
-        )}
+          <span className="font-mono text-xs w-10 text-right" style={{ color: corConsome }}>{consome.toFixed(1).replace(".", ",")}%</span>
+        </div>
+        {/* Metadados: CMC/autoconsumo (+ pulmão atual p/ não-geradora) */}
+        <div className="flex items-center gap-2 text-[10px] font-mono pl-px">
+          <span className="text-stone-600">{ehGeradora ? "autoconsumo" : "CMC"} <span className="text-stone-600">{cmc.toFixed(0)}</span></span>
+          {pulmaoFmt && (
+            <>
+              <span className="text-stone-700">·</span>
+              <span style={{ color: pulmaoFmt.cor }}>{pulmaoFmt.label}</span>
+            </>
+          )}
+        </div>
         {projAtualFmt && (
           <div className="text-[10px] font-mono pl-px mt-0.5" style={{ color: projAtualFmt.cor }}>
             {projAtualFmt.label}
-          </div>
-        )}
-        {ehGeradora && (
-          <div className="text-[10px] font-mono text-stone-600 pl-px">
-            autoconsumo {cmc.toFixed(0)} kWh/mês
           </div>
         )}
       </div>
@@ -1222,15 +1211,13 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
             <span className="font-mono text-xs w-10 text-right" style={{ color: corEstado }}>{rateioProposto}%</span>
           )}
         </div>
-        {!ehGeradora && (
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">consome</span>
-            <div className="flex-1">
-              <BarraComparativa pct={consome} maxPct={maxPct} cor={corConsome} fantasma={estado === "saindo"} />
-            </div>
-            <span className="font-mono text-xs w-10 text-right" style={{ color: corConsome }}>{consome.toFixed(1).replace(".", ",")}%</span>
+        <div className="flex items-center gap-2 mb-1">
+          <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">consome</span>
+          <div className="flex-1">
+            <BarraComparativa pct={consome} maxPct={maxPct} cor={corConsome} fantasma={estado === "saindo"} />
           </div>
-        )}
+          <span className="font-mono text-xs w-10 text-right" style={{ color: corConsome }}>{consome.toFixed(1).replace(".", ",")}%</span>
+        </div>
         {/* Projeção: quanto tempo a nova % aguenta */}
         <div className="text-[10px] font-mono pl-px">
           {estado === "saindo" ? (
@@ -1401,7 +1388,7 @@ function PainelRiscos({ riscos, horizonte, onClickCliente }) {
   );
 }
 
-function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, onAbrirFormulario }) {
+function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFormulario }) {
   const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
   // overrides: { [uc]: pctEditado }. null quando NÃO em modo edição.
   const [overrides, setOverrides] = useState(null);
@@ -1424,6 +1411,18 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
     () => (cenario ? analisarCenario(cenario, 6) : null),
     [cenario]
   );
+  const linhasOrdenadas = useMemo(() => {
+    return [...(cenario?.linhas || [])].sort((a, b) => {
+      if (a.cliente.ehUCGeradora !== b.cliente.ehUCGeradora) return a.cliente.ehUCGeradora ? -1 : 1;
+      const ordA = ORDEM_ESTADO[a.estado] ?? 9;
+      const ordB = ORDEM_ESTADO[b.estado] ?? 9;
+      if (ordA !== ordB) return ordA - ordB;
+      if (a.estado === "ajustado") {
+        return Math.abs(b.rateioProposto - b.rateioAtual) - Math.abs(a.rateioProposto - a.rateioAtual);
+      }
+      return b.rateioProposto - a.rateioProposto || b.rateioAtual - a.rateioAtual;
+    });
+  }, [cenario]);
 
   if (!cenario) {
     return <p className="text-stone-600 text-sm">Nenhuma UG carregada.</p>;
@@ -1482,19 +1481,6 @@ function TelaComparativo({ ugsValidadas, planoGlobal, clientes, onClickCliente, 
     });
     setOverrides(init);
   };
-
-  const linhasOrdenadas = useMemo(() => {
-    return [...linhas].sort((a, b) => {
-      if (a.cliente.ehUCGeradora !== b.cliente.ehUCGeradora) return a.cliente.ehUCGeradora ? -1 : 1;
-      const ordA = ORDEM_ESTADO[a.estado] ?? 9;
-      const ordB = ORDEM_ESTADO[b.estado] ?? 9;
-      if (ordA !== ordB) return ordA - ordB;
-      if (a.estado === "ajustado") {
-        return Math.abs(b.rateioProposto - b.rateioAtual) - Math.abs(a.rateioProposto - a.rateioAtual);
-      }
-      return b.rateioProposto - a.rateioProposto || b.rateioAtual - a.rateioAtual;
-    });
-  }, [linhas]);
 
   const denom = cenario.distribuivel || 0;
   const consomeDe = l => denom > 0 ? (l.cmc / denom) * 100 : 0;
@@ -1859,12 +1845,25 @@ function ControleClienteSlider({ cliente, valorAtual, valor, onChange, otimizado
   );
 }
 
-function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) {
+function montarOverridesOtimizados(cenario) {
+  const overrides = {};
+  cenario?.linhas.forEach(l => {
+    if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) overrides[l.cliente.uc] = l.rateioProposto;
+  });
+  return overrides;
+}
+
+function TelaSimulador({ ugsValidadas, planoGlobal, clientes }) {
   const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
   const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
 
+  const cenarioOtimizado = useMemo(
+    () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
+    [ug, planoGlobal]
+  );
+
   // Estado de simulação
-  const [overrides, setOverrides] = useState({});       // { uc: pct }
+  const [overrides, setOverrides] = useState(() => montarOverridesOtimizados(cenarioOtimizado)); // { uc: pct }
   const [capacidadeOverride, setCapacidadeOverride] = useState(null); // kWh ou null
   const [adicionados, setAdicionados] = useState([]);   // [clienteObj] de outras UGs
   const [removidos, setRemovidos] = useState([]);        // [uc] removidos desta UG
@@ -1872,26 +1871,16 @@ function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) 
 
   const capReal = ug?.capacidade_kwh || 0;
 
-  // Cenário Otimizado (referência)
-  const cenarioOtimizado = useMemo(
-    () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
-    [ug, planoGlobal]
-  );
-
-  // Reseta TODO o estado de simulação ao trocar de UG.
-  useEffect(() => {
-    if (!cenarioOtimizado) return;
-    const init = {};
-    cenarioOtimizado.linhas.forEach(l => {
-      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) init[l.cliente.uc] = l.rateioProposto;
-    });
-    setOverrides(init);
+  const mudarUG = (novoNome) => {
+    const novaUG = ugsValidadas.find(u => u.nome === novoNome);
+    const novoCenario = novaUG ? construirCenarioProposto(novaUG, planoGlobal) : null;
+    setUgNome(novoNome);
+    setOverrides(montarOverridesOtimizados(novoCenario));
     setCapacidadeOverride(null);
     setAdicionados([]);
     setRemovidos([]);
     setUcParaAdd("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ugNome]);
+  };
 
   const optsSim = useMemo(() => ({
     overrides,
@@ -1940,11 +1929,7 @@ function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) 
     setOverrides(nov); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
   };
   const resetarOtimizado = () => {
-    const nov = {};
-    cenarioOtimizado.linhas.forEach(l => {
-      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) nov[l.cliente.uc] = l.rateioProposto;
-    });
-    setOverrides(nov); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
+    setOverrides(montarOverridesOtimizados(cenarioOtimizado)); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
   };
   const renormalizarSimulado = () => {
     const renorm = simularCenario(ug, planoGlobal, { ...optsSim, renormalizar: true });
@@ -2001,7 +1986,7 @@ function TelaSimulador({ ugsValidadas, planoGlobal, clientes, onClickCliente }) 
             <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
             <select
               value={ugNome}
-              onChange={e => setUgNome(e.target.value)}
+              onChange={e => mudarUG(e.target.value)}
               className="bg-bone border border-stone-200 px-4 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60 min-w-[200px]"
             >
               {ugsValidadas.map(u => (
@@ -2544,7 +2529,6 @@ export default function App() {
           <TelaComparativo
             ugsValidadas={ugsValidadas}
             planoGlobal={planoGlobal}
-            clientes={clientes}
             onClickCliente={setClienteSel}
             onAbrirFormulario={setFormularioRateio}
           />
@@ -2555,7 +2539,6 @@ export default function App() {
             ugsValidadas={ugsValidadas}
             planoGlobal={planoGlobal}
             clientes={clientes}
-            onClickCliente={setClienteSel}
           />
         )}
 

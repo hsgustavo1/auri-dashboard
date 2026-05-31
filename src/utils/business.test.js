@@ -2,14 +2,13 @@ import { describe, it, expect } from "vitest";
 import {
   calcularCMC,
   cmcBaseline,
-  cmcRecente,
   statusSaldo,
   carregamentoDeDemanda,
   carregamentoUG,
   demandaUG,
-  capacidadeEfetivaUG,
   projetarHorizonte,
   renormalizarSomaParaCem,
+  buildClientes,
   OPT_PARAMS,
 } from "./business.js";
 
@@ -25,6 +24,47 @@ const cliente = (uc, cmc, rateio, ehUCGeradora = false, saldo = 0) => ({
   ehUCGeradora, saldo,
   colchaoIdeal: cmc * 2,
   status: statusSaldo(saldo, cmc),
+});
+
+// ─── buildClientes ──────────────────────────────────────────────────────────
+describe("buildClientes", () => {
+  it("mescla consumo da UC antiga e nova após renumeração", () => {
+    const meses = ["01/2026", "02/2026", "03/2026", "04/2026", "05/2026"];
+    const sc = {
+      "469.231.012-40": {
+        uc_antiga: "15286083",
+        uc_nova: "469.231.012-40",
+        ug: "Piloto",
+        rateio_pct: 6,
+        media_consumo: 0,
+        saldo_historico: Object.fromEntries(meses.map((m, i) => [m, 260 + i * 10])),
+        meses,
+      },
+    };
+    const fat = {
+      "15286083": {
+        "01/2026": { consumo: 100, saldo: 260 },
+        "02/2026": { consumo: 110, saldo: 270 },
+        "03/2026": { consumo: 120, saldo: 280 },
+      },
+      "469.231.012-40": {
+        "04/2026": { consumo: 130, saldo: 290 },
+        "05/2026": { consumo: 140, saldo: 300 },
+      },
+    };
+    const base = [{
+      uc: "469.231.012-40",
+      nome: "Emerson Silva",
+      geradora: "Piloto",
+      desconto_pct: 0,
+      emite_cobranca: false,
+    }];
+
+    const [resultado] = buildClientes(sc, fat, base);
+
+    expect(resultado.consumoArr).toEqual([100, 110, 120, 130, 140]);
+    expect(resultado.cmc).toBeCloseTo(cmcBaseline([100, 110, 120, 130, 140]), 5);
+  });
 });
 
 // ─── calcularCMC ──────────────────────────────────────────────────────────

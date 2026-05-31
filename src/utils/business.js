@@ -116,7 +116,8 @@ export function buildClientes(scData, fatData, clientesBase) {
   return clientesBase.map(base => {
     const sc = scData[base.uc] || {};
     const ucAntiga = sc.uc_antiga || base.uc;
-    const fat = fatData[ucAntiga] || fatData[base.uc] || {};
+    const aliasesUc = [...new Set([ucAntiga, sc.uc_nova, base.uc].filter(Boolean))];
+    const fat = Object.assign({}, ...aliasesUc.map(uc => fatData[uc] || {}));
 
     const saldoHist = sc.saldo_historico || {};
     const meses = sc.meses || [];
@@ -187,7 +188,7 @@ export function validarRateios(clientes) {
   const somas = {}, porUG = {};
   UG_NOMES.forEach(n => { somas[n] = 0; porUG[n] = []; });
   clientes.forEach(c => {
-    if (c.ug && somas.hasOwnProperty(c.ug)) {
+    if (c.ug && Object.prototype.hasOwnProperty.call(somas, c.ug)) {
       somas[c.ug] += c.rateio_pct;
       porUG[c.ug].push(c);
     }

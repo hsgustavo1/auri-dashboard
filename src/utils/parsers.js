@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import { RE_MES, TIPO_GD, UC_GERADORA_ANTIGA, UC_GERADORA_NOVA } from "../config";
+import { RE_MES, TIPO_GD } from "../config";
 
 export function parseBR(v) {
   if (v === null || v === undefined || v === "" || v === "Sem Fatura") return null;
