@@ -9,6 +9,14 @@ import {
   projetarHorizonte,
   renormalizarSomaParaCem,
   buildClientes,
+  construirCenarioProposto,
+  construirCenarioComOverrides,
+  distribuivelDaUG,
+  capacidadeEfetivaUG,
+  fracPassoUrgencia,
+  passoConvergencia,
+  squeezeColchaoAware,
+  diagnosticarUG,
   OPT_PARAMS,
 } from "./business.js";
 
@@ -325,6 +333,179 @@ describe("renormalizarSomaParaCem", () => {
     renormalizarSomaParaCem([geradora, ajust]);
     // geradora permanece em 10%; só o ajustável é normalizado
     expect(geradora.rateioProposto).toBe(10);
+  });
+});
+
+// ─── construirCenarioProposto — distribuível consistente (regressão) ─────────
+// Bug: a aba Comparativo em modo VISUALIZAÇÃO usa construirCenarioProposto, que
+// subtraía o autoconsumo da geradora do distribuível MESMO em GD1. O modo EDIÇÃO
+// usa simularCenario → distribuivelDaUG (type-aware: GD1 = capacidade). Isso fazia
+// a barra "% consome" mudar entre os dois modos sem nenhuma edição. O denominador
+// deve ser idêntico nos dois caminhos e igual ao canônico capacidadeEfetivaUG.
+describe("construirCenarioProposto — distribuível view == edit", () => {
+  const ugTeste = (tipo, cap, gerCmc) => ({
+    nome: "UGteste", tipo, capacidade_kwh: cap,
+    clientes: [
+      cliente("GER", gerCmc, 10, true, gerCmc * 2),
+      cliente("A", 1000, 45),
+      cliente("B", 800, 45),
+    ],
+  });
+
+  it("GD1: distribuível = capacidade (não subtrai autoconsumo da geradora)", () => {
+    const ug = ugTeste("GD1", 3000, 200);
+    const view = construirCenarioProposto(ug, {}).distribuivel;
+    expect(view).toBe(capacidadeEfetivaUG(ug, ug.clientes)); // GD1 → 3000
+    expect(view).toBe(3000);
+  });
+
+  it("GD1: denominador idêntico entre visualização e edição", () => {
+    const ug = ugTeste("GD1", 3000, 200);
+    const view = construirCenarioProposto(ug, {}).distribuivel;
+    const edit = construirCenarioComOverrides(ug, {}, {}, { renormalizar: false }).distribuivel;
+    expect(view).toBe(edit);
+    expect(view).toBe(distribuivelDaUG(ug));
+  });
+
+  it("GD2 não é afetado: distribuível = cap − autoconsumo nos dois modos", () => {
+    const ug = ugTeste("GD2", 3000, 200);
+    const view = construirCenarioProposto(ug, {}).distribuivel;
+    const edit = construirCenarioComOverrides(ug, {}, {}, { renormalizar: false }).distribuivel;
+    expect(view).toBe(2800);
+    expect(edit).toBe(2800);
+  });
+});
+
+// ─── passo de convergência por urgência (Lever A) ─────────────────────────
+// O otimizador converge cada cliente em direção ao seu alvo. O passo deixa de ser
+// uniforme (1/6) e escala com a urgência: perto de problema (crítico/excessivo) converge
+// mais rápido; estável no ritmo base; nunca ultrapassa o alvo.
+describe("fracPassoUrgencia", () => {
+  it("crítico e excessivo convergem mais rápido que o base", () => {
+    expect(fracPassoUrgencia("critico")).toBeGreaterThan(OPT_PARAMS.PASSO_BASE);
+    expect(fracPassoUrgencia("excessivo")).toBeGreaterThan(OPT_PARAMS.PASSO_BASE);
+    expect(fracPassoUrgencia("critico")).toBeCloseTo(OPT_PARAMS.PASSO_BASE * OPT_PARAMS.PASSO_MULT_URGENTE, 9);
+  });
+
+  it("baixo e alto convergem a um ritmo intermediário", () => {
+    expect(fracPassoUrgencia("baixo")).toBeCloseTo(OPT_PARAMS.PASSO_BASE * OPT_PARAMS.PASSO_MULT_ATENCAO, 9);
+    expect(fracPassoUrgencia("alto")).toBeCloseTo(OPT_PARAMS.PASSO_BASE * OPT_PARAMS.PASSO_MULT_ATENCAO, 9);
+  });
+
+  it("ideal fica no ritmo base (anti-churn)", () => {
+    expect(fracPassoUrgencia("ideal")).toBeCloseTo(OPT_PARAMS.PASSO_BASE, 9);
+  });
+});
+
+describe("passoConvergencia", () => {
+  it("(a) crítico move mais que ideal para o mesmo gap", () => {
+    const gap = 12;
+    expect(passoConvergencia(gap, "critico")).toBeGreaterThan(passoConvergencia(gap, "ideal"));
+  });
+
+  it("(b) excessivo drena mais rápido que ideal para o mesmo gap negativo", () => {
+    const gap = -12;
+    expect(Math.abs(passoConvergencia(gap, "excessivo"))).toBeGreaterThan(Math.abs(passoConvergencia(gap, "ideal")));
+  });
+
+  it("(d) nunca ultrapassa o alvo (|passo| ≤ |gap|)", () => {
+    expect(Math.abs(passoConvergencia(3, "critico"))).toBeLessThanOrEqual(3);
+    expect(Math.abs(passoConvergencia(2, "excessivo"))).toBeLessThanOrEqual(2);
+    expect(Math.abs(passoConvergencia(-4, "critico"))).toBeLessThanOrEqual(4);
+  });
+
+  it("garante ao menos ±1pp na direção do gap (sem stall por arredondamento)", () => {
+    expect(passoConvergencia(3, "ideal")).toBe(1);   // 3×1/6 = 0,5 → arredonda p/ 0 → mín +1
+    expect(passoConvergencia(-3, "ideal")).toBe(-1);
+  });
+
+  it("respeita a direção do gap", () => {
+    expect(passoConvergencia(12, "critico")).toBeGreaterThan(0);
+    expect(passoConvergencia(-12, "excessivo")).toBeLessThan(0);
+  });
+});
+
+// ─── squeezeColchaoAware (Lever B/C) ──────────────────────────────────────
+// Fecha a soma em 100% debitando/creditando PONDERADO PELO COLCHÃO (razão saldo/CMC):
+// sob sobrescrição, corta de quem tem colchão e protege quem está no/abaixo do mínimo.
+describe("squeezeColchaoAware", () => {
+  // linha de cenário com saldo (p/ razão = saldo/cmc)
+  const ln = (uc, cmc, saldo, rateioProposto, { ger = false, estado = "mantido" } = {}) => ({
+    cliente: { uc, ehUCGeradora: ger, media_consumo: 0, saldo },
+    cmc, rateioProposto, rateioAtual: rateioProposto, estado,
+  });
+  const soma = ls => ls.reduce((s, l) => s + l.rateioProposto, 0);
+
+  it("(a) sob sobrescrição, protege o faminto e corta do acolchoado", () => {
+    const acolchoado = ln("A", 500, 5000, 60); // razão 10 → excesso de colchão
+    const faminto    = ln("B", 500, 0,   60);  // razão 0  → no mínimo, protegido
+    const linhas = [acolchoado, faminto];       // soma 120 → cortar 20
+    squeezeColchaoAware(linhas);
+    expect(faminto.rateioProposto).toBe(60);    // protegido
+    expect(acolchoado.rateioProposto).toBe(40); // absorve todo o corte
+  });
+
+  it("(b) soma fecha exatamente 100%", () => {
+    const linhas = [ln("A",500,5000,55), ln("B",500,200,40), ln("C",400,3000,30)];
+    squeezeColchaoAware(linhas);
+    expect(soma(linhas)).toBe(100);
+  });
+
+  it("(c) fallback uniforme quando ninguém tem excesso de colchão (Σpeso=0)", () => {
+    // ambos no mínimo (razão ~0), soma 120 → sem excesso p/ debitar → proporcional (uniforme)
+    const a = ln("A", 500, 0, 60), b = ln("B", 500, 0, 60);
+    squeezeColchaoAware([a, b]);
+    expect(a.rateioProposto).toBe(50);
+    expect(b.rateioProposto).toBe(50); // diluição proporcional preservada no caso degenerado
+  });
+
+  it("(d) nunca produz rateio negativo num corte agressivo", () => {
+    const linhas = [ln("A",500,5000,10), ln("B",500,4500,10), ln("C",500,0,130)];
+    squeezeColchaoAware(linhas);
+    linhas.forEach(l => expect(l.rateioProposto).toBeGreaterThanOrEqual(0));
+    expect(soma(linhas)).toBe(100);
+  });
+
+  it("escala p/ cima: dá mais a quem tem déficit de colchão", () => {
+    // soma 80 → adicionar 20; raso (B) recebe mais que o acolchoado (A)
+    const a = ln("A", 500, 5000, 40); // razão 10
+    const b = ln("B", 500, 0,    40); // razão 0 (déficit)
+    squeezeColchaoAware([a, b]);
+    expect(b.rateioProposto).toBeGreaterThan(a.rateioProposto);
+    expect(soma([a, b])).toBe(100);
+  });
+
+  it("preserva fixas (geradora) e fecha 100% com o resto", () => {
+    const ger = ln("GER", 200, 100, 10, { ger: true });
+    const a = ln("A", 500, 5000, 60), b = ln("B", 500, 0, 60);
+    const linhas = [ger, a, b];
+    squeezeColchaoAware(linhas);
+    expect(ger.rateioProposto).toBe(10); // fixa intocada
+    expect(soma(linhas)).toBe(100);
+  });
+});
+
+// ─── diagnosticarUG — distribuível type-aware (regressão do chip) ──────────
+// Bug: diagnosticarUG subtraía o autoconsumo da geradora MESMO em GD1, divergindo do
+// canônico capacidadeEfetivaUG e distorcendo rateioIdealAlvo + pct_inicial de órfãs.
+describe("diagnosticarUG — distribuível", () => {
+  const cliUG = (uc, cmc, saldo, rateio, ugNome, tipoGd, ger = false) => ({
+    uc, nome: uc, cmc, rateio_pct: rateio, saldo, ug: ugNome, tipoGd,
+    ehUCGeradora: ger, travado: false, media_consumo: cmc,
+    colchaoIdeal: cmc * 2, status: statusSaldo(saldo, cmc),
+  });
+
+  it("GD1: distribuível = capacidade (não subtrai autoconsumo da geradora)", () => {
+    const clientes = [cliUG("GER",200,400,10,"P","GD1",true), cliUG("A",1000,2000,45,"P","GD1")];
+    const ug = { nome: "P", tipo: "GD1", capacidade_kwh: 3000, clientes };
+    expect(diagnosticarUG(ug).distribuivel).toBe(capacidadeEfetivaUG(ug, clientes));
+    expect(diagnosticarUG(ug).distribuivel).toBe(3000);
+  });
+
+  it("GD2: distribuível = cap − autoconsumo (inalterado)", () => {
+    const clientes = [cliUG("GER",200,400,0,"L","GD2",true), cliUG("A",1000,2000,50,"L","GD2")];
+    const ug = { nome: "L", tipo: "GD2", capacidade_kwh: 3000, clientes };
+    expect(diagnosticarUG(ug).distribuivel).toBe(2800);
   });
 });
 

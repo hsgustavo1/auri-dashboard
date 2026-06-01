@@ -4,15 +4,13 @@ Dashboard operacional para gestão de rateio de créditos de energia solar distr
 
 ## Visão Geral
 
-O sistema consome cinco abas de uma planilha Google Sheets (publicadas como CSV) e entrega sete telas:
+O sistema consome cinco abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
-- **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%.
-- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Cada cliente exibe **barras gêmeas** (`recebe` vs `consome`) em ambos os lados para visualizar se a proposta aproxima o rateio do consumo real. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **modo de edição manual** dos %´s (com renormalização para 100%). Botão **Gerar Formulário Equatorial** (PDF).
-- **Simulador "E se?"** — experimentação livre: sliders de % por cliente, **override de capacidade** da UG e **movimentação cross-UG** (trazer clientes de outras UGs), comparando Atual / Otimizado / Simulado em tempo real.
+- **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%. O ajuste interno é **ponderado por urgência** (clientes perto de crítico/excessivo convergem mais rápido) e o fechamento de soma é **ciente de colchão** (ver Otimizador, abaixo).
+- **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Cada cliente exibe **barras gêmeas** (`recebe` vs `consome`) em ambos os lados. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **edição manual persistente** dos %´s: os valores editados são **operativos** (entram no cenário, nas métricas e no Formulário Equatorial) e **persistem em `localStorage`** (sobrevivem a refresh/troca de UG/aba). Um **badge por linha** + **banner global** sinalizam quando o valor usado difere da proposta do otimizador. Botão **Gerar Formulário Equatorial** (PDF).
 - **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado).
-- **Panorama** — visão agregada: distribuição de saúde de saldo por UG (stacked bar chart), filtro por situação e totais globais.
-- **LTV** — análise financeira por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri pela UC do cliente) e LTV = receita − despesa. Gráfico de barras empilhadas por mês (pago vs. pendente), tabela com ratio Rec/Desp, filtros de período e UG, headers clicáveis para ordenação. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente` para clientes com dados.
+- **LTV — cockpit financeiro** — painel de decisão por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri) e margem (LTV = receita − despesa). Faixa de **KPIs** (Receita, Despesa, Margem R$/%, Nº de clientes no vermelho, R$ total sangrando, R$/kWh global), tabela com coluna **Margem %**, ratio Rec/Desp e filtro **"só no vermelho"** (clientes com LTV < 0, ordenados pelo prejuízo). Gráfico de barras empilhadas por mês (pago vs. pendente), filtros de período e UG, headers clicáveis. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente`.
 
 Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
@@ -50,7 +48,7 @@ O objetivo central do otimizador é **carregamento ≈ 100%** (casar geração�
 - **GD1:** `Σ cmcEfetivo(geradora + beneficiários servidos) ÷ capacidade`. A geradora GD1 participa do rateio e também consome.
 - **Regra do "servido":** um beneficiário só conta se tem **rateio > 0**. Um cliente a 0% não é servido por aquela UG (UC sem UG efetiva) — não entra no carregamento.
 
-Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG Detalhe, Otimizador, Comparativo, Simulador), eliminando divergências entre telas.
+Essa função é a **fonte única** usada em todas as telas (Visão Geral, UG Detalhe, Otimizador, Comparativo) e no otimizador (`distribuivelDaUG` / `diagnosticarUG`), eliminando divergências entre telas.
 
 ### Tela UG Detalhe — card "Distribuição" (unificado)
 
@@ -138,7 +136,7 @@ src/hooks/useSheetData.js   ← fetch paralelo das 5 abas + parse + build + otim
                                        DADOS_FIXOS_AURI, CLASSE_POR_UG, OPT_PARAMS
       ▼
 src/App.jsx                 ← UI (React + Recharts + Tailwind/Auri)
-  ├── Visão Geral · UG Detalhe · Otimizador · Comparativo · Simulador · Clientes · Panorama · LTV
+  ├── Visão Geral · UG Detalhe · Otimizador · Comparativo · Clientes · LTV (cockpit financeiro)
   └── modais: DetalheCliente (gráfico hist+projeção + seção Financeiro LTV) · FormularioRateio (PDF Equatorial)
 ```
 
@@ -151,7 +149,10 @@ src/App.jsx                 ← UI (React + Recharts + Tailwind/Auri)
 ### Parâmetros (`OPT_PARAMS`)
 
 ```js
-PASSO_CONVERGENCIA: 1/6      // fração do gap aplicada por execução
+PASSO_BASE: 1/6             // fração do gap aplicada por execução p/ cliente saudável (~6 meses p/ convergir)
+PASSO_MULT_URGENTE: 3       // multiplicador do passo p/ crítico/excessivo (resgate/drenagem rápida, ~2 ciclos)
+PASSO_MULT_ATENCAO: 2       // multiplicador do passo p/ baixo/alto
+PASSO_MAX_FRAC: 1           // teto da fração — nunca ultrapassa o alvo (clamp |passo| ≤ |gap|)
 DEAD_ZONE_PP: 2             // |alvo − atual| < 2pp → sem sugestão
 FAIXA_ALVO_MIN: 95          // carregamento mínimo aceitável (%)
 FAIXA_ALVO_MAX: 105         // carregamento máximo aceitável (%)
@@ -159,6 +160,7 @@ FATOR_FOLGA_ORFA: 1.1       // (legado — substituído pelos tiers best-fit)
 TETO_CARREGAMENTO_ORFA: 110 // acima disso, órfã não é forçada — sinaliza "aguardar nova UG"
 SALDO_TRAVADO_MIN: 100      // saldo > 100 kWh + invariante 6m = travado
 MIN_DELTA_INCREMENTAL: 1
+RAZAO_IDEAL: 2              // colchão ideal = 2× CMC; razão saldo/CMC acima disso = excesso (squeeze cushion-aware)
 ```
 
 ### Estágio 0 — Diagnóstico e Classificação
@@ -183,7 +185,9 @@ Processa órfãs da **maior para a menor** (First-Fit Decreasing). Para cada uma
 
 ### Estágio 2 — Ajuste Interno por UG
 
-Sobre UCs `ajustavel`: move cada uma 1/6 do gap até seu `rateioIdealAlvo` (drena saldo excessivo, alimenta baixo), normalizado no orçamento `S_aj`, com dead-zone de 2pp. **Não altera o carregamento** — é saúde de saldo individual.
+Sobre UCs `ajustavel`: move cada uma em direção ao seu `rateioIdealAlvo` (drena saldo excessivo, alimenta baixo), normalizado no orçamento `S_aj`, com dead-zone de 2pp. **Não altera o carregamento** — é saúde de saldo individual.
+
+O passo de convergência é **ponderado por urgência** (`fracPassoUrgencia` / `passoConvergencia`): clientes **crítico/excessivo** convergem a `3×` o passo base (resgate/drenagem em ~2 ciclos), **baixo/alto** a `2×`, e **ideal** no passo base `1/6` (protegido pela dead-zone). O passo nunca ultrapassa o alvo (clamp). Assim um cliente perto de problema não é resgatado no mesmo ritmo glacial de um com colchão sobrando.
 
 ### Estágio 3 — Swap entre 2 UGs
 
@@ -199,14 +203,15 @@ Greedy: aceita o swap que mais reduz a violação total. **Direcional:** só tir
 
 ---
 
-## Comparativo e Simulador
+## Comparativo
 
 ### `construirCenarioProposto(ug, planoGlobal)`
-Helper puro: aplica as recomendações do otimizador a uma UG, define `estado` por cliente (`mantido`/`ajustado`/`entrando`/`saindo`), renormaliza a soma para 100% (regra Equatorial) e enriquece com projeção. A renormalização é uma formalidade regulatória — a UI a apresenta como nota de rodapé, com o **carregamento** em destaque.
+Helper puro: aplica as recomendações do otimizador a uma UG, define `estado` por cliente (`mantido`/`ajustado`/`entrando`/`saindo`), fecha a soma em 100% e enriquece com projeção. O distribuível usado é **type-aware** (`distribuivelDaUG` — GD1 = capacidade cheia, GD2 = cap − autoconsumo), idêntico ao do carregamento.
 
-### `construirCenarioComOverrides` / `simularCenario`
-- **Comparativo (modo edição):** `construirCenarioComOverrides(ug, plano, { [uc]: pct })` — usuário edita os %´s; banner de renormalização quando soma ≠ 100%.
-- **Simulador:** `simularCenario(ug, plano, { overrides, capacidade, adicionados, removidos })` — superset que também aceita override de capacidade e movimentação cross-UG.
+O fechamento de soma é **ciente de colchão** (`squeezeColchaoAware`) — em vez de diluir todos os flexíveis pelo mesmo fator, distribui o ajuste ponderado pela razão saldo/CMC vs. colchão ideal (`RAZAO_IDEAL = 2`): sob sobrescrição **corta de quem tem excesso de colchão e protege quem está no/abaixo do mínimo** (crítico/baixo, entrantes famintos); sob subutilização credita o déficit primeiro. Fallback uniforme quando não há variância de colchão. Assim o crédito que sobra de clientes acolchoados financia os entrantes em vez de ser diluído por igual.
+
+### `construirCenarioComOverrides` / `simularCenario` (edição manual)
+`construirCenarioComOverrides(ug, plano, { [uc]: pct })` — no Comparativo o usuário edita os %´s. Diferente da proposta do otimizador, a edição manual usa `renormalizarSomaParaCem` (renormalização **uniforme**, respeita o % digitado), com banner quando a soma ≠ 100%. Os overrides são **persistidos em `localStorage` por UG** e são **operativos** (entram no cenário, métricas e Formulário Equatorial); um helper `useLocalStorageState` (App.jsx) cuida da persistência.
 
 ### `analisarCenario(cenario, n=6)`
 Distribuição de saúde atual vs projetada em N meses, pulmão coletivo e riscos remanescentes. Usa `projetarHorizonte` / `projetarSaldoEmNMeses`.
@@ -226,15 +231,16 @@ Na seção 2 do formulário, a lista segue a regra regulatória por tipo de gera
 ```
 auri-dashboard/
 ├── src/
-│   ├── App.jsx              # UI completa (7 telas + 2 modais)
+│   ├── App.jsx              # UI completa (5 telas + 2 modais)
 │   ├── config.js            # URLs (5 abas), UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
 │   ├── hooks/useSheetData.js
 │   ├── utils/
-│   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador, cenários, projeções,
+│   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador (passo por urgência +
+│   │   │                        # squeeze cushion-aware), cenários, projeções,
 │   │   │                        # buildFinanceiro (LTV — join R_D_Equatorial + Fatura Auri geradoras)
-│   │   ├── business.test.js     # 37 testes unitários de business.js (Vitest)
+│   │   ├── business.test.js     # testes unitários de business.js (Vitest)
 │   │   ├── parsers.js           # parsers CSV (incl. parseRDEquatorial)
-│   │   ├── parsers.test.js      # 12 testes unitários de parsers.js (Vitest)
+│   │   ├── parsers.test.js      # testes unitários de parsers.js (Vitest)
 │   │   ├── formularioRateio.js
 │   │   ├── pdfRateioGenerator.js
 │   │   └── endereco.js
@@ -252,7 +258,7 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
-npm test           # testes unitários (Vitest) — 52 testes
+npm test           # testes unitários (Vitest) — 71 testes
 npm run lint       # análise estática (ESLint)
 npm run test:watch # modo watch para desenvolvimento
 ```
@@ -301,7 +307,7 @@ O modal de detalhe exibe "SALDO: HISTÓRICO + PROJEÇÃO 6M" com quatro linhas. 
 
 1. **Apara meses em aberto no fim da série** — `parseSCAnalitico` inclui o mês corrente ainda sem fatura (`saldo = null`). A função descarta esses `null`s finais antes de fatiar a janela de 6 meses, garantindo que a linha sólida chegue direto ao ponto "hoje" sem gap.
 2. **Ponto "hoje"** — âncora entre histórico e projeção; recebe `saldoHist = saldo atual`.
-3. **Projeção linear** — `saldo + n × ((pct/100 × distribuível) − cmc)` para n = 1..6 meses.
+3. **Projeção linear** — `saldo + n × ((pct/100 × distribuível) − cmc)` para n = 1..6 meses. O `pct` otimizado vem de `rateioFinalDoCliente` (valor **final do cenário, após o squeeze**) — consistente com o que o Comparativo mostra, e não o valor cru do estágio 2.
 4. **`connectNulls={true}`** — meses sem fatura no meio da série (dado ausente) são interpolados em vez de quebrarem a linha em segmentos soltos.
 
 ### Bug corrigido: `parseBR` zero → null (`parsers.js`)
@@ -333,7 +339,13 @@ Agora os aliases conhecidos são mesclados por mês antes da montagem de `consum
 
 ---
 
-## Aba LTV — Análise Financeira
+## Aba LTV — Cockpit Financeiro
+
+Responde, em segundos, a pergunta de fundador: **estou ganhando ou perdendo, e onde?**
+
+- **Faixa de KPIs** (respeita o filtro de período/UG): Receita, Despesa, **Margem (LTV)** em R$ com sub-linha de **% da receita**, **R$/kWh global**, **Nº de clientes no vermelho** e **R$ total sangrando** (soma das margens < 0).
+- **Coluna Margem %** na tabela (`ltv/receitaTotal`), verde ≥ 50% · âmbar 0–50% · vermelho < 0.
+- **Filtro "só no vermelho"** — mostra apenas clientes com LTV < 0, ordenados pelo tamanho do prejuízo (cada linha clicável → `DetalheCliente`).
 
 `buildFinanceiro(clientes, transacoes, fatData)` em `business.js` enriquece cada cliente com:
 
@@ -361,6 +373,9 @@ cliente.financeiro = {
 
 - **Calibração contínua do CMC:** o `cmcBaseline` unificado já alimenta carregamento, otimizador, pulmão e status. Monitorar o efeito da winsorização nos limiares do otimizador conforme novos ciclos de faturamento forem adicionados.
 - Planejamento multi-período (estado-alvo em N meses).
-- Persistência de estado (localStorage) e histórico de ajustes aplicados.
+- **Teto de churn por ciclo** no `squeezeColchaoAware` (limitar o corte de cada cliente por solicitação) — hoje o squeeze é imediato/total.
+- Cockpit financeiro Fases 3–4: decomposição do prejuízo no `DetalheCliente` (por que o cliente sangra) e linha de margem mensal + marcador do reajuste ANEEL de outubro.
 - Automação pós-PDF: envio do formulário Equatorial por e-mail, escrita de volta na Auribase e criação de tarefa no ClickUp (ver detalhes internos).
 - Integração de escrita de volta ao Google Sheets.
+
+> Persistência de estado em `localStorage` (overrides manuais do Comparativo) — **implementado**.

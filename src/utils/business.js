@@ -2,7 +2,10 @@ import { TIPO_GD, UC_GERADORA_NOVA, UC_GERADORA_ANTIGA, UG_NOMES } from "../conf
 
 // ─── Parâmetros do otimizador (ajustáveis para iteração rápida) ─────
 export const OPT_PARAMS = {
-  PASSO_CONVERGENCIA: 1 / 6,   // fração do gap aplicada por execução (~6 meses para convergir)
+  PASSO_BASE: 1 / 6,           // fração do gap aplicada por execução p/ cliente saudável (~6 meses p/ convergir)
+  PASSO_MULT_URGENTE: 3,       // multiplicador do passo p/ crítico/excessivo (resgate/drenagem rápida, ~2 ciclos)
+  PASSO_MULT_ATENCAO: 2,       // multiplicador do passo p/ baixo/alto
+  PASSO_MAX_FRAC: 1,           // teto da fração do passo — nunca ultrapassa o alvo (clamp |passo| ≤ |gap|)
   DEAD_ZONE_PP: 2,             // sugestões com |alvo - atual| < 2pp são ignoradas
   FAIXA_ALVO_MIN: 95,          // carregamento mínimo aceitável de uma UG
   FAIXA_ALVO_MAX: 105,         // carregamento máximo aceitável de uma UG
@@ -10,6 +13,7 @@ export const OPT_PARAMS = {
   TETO_CARREGAMENTO_ORFA: 110, // acima disso, órfã não é forçada — sinaliza "aguardar nova UG"
   SALDO_TRAVADO_MIN: 100,      // saldo > 100 kWh + invariante 6m = travado
   MIN_DELTA_INCREMENTAL: 1,    // movimento mínimo (pp) quando há gap acima da dead-zone
+  RAZAO_IDEAL: 2,              // colchão ideal = 2× CMC; razão saldo/CMC acima disso = excesso (squeeze cushion-aware)
 };
 
 // ─── Parâmetros do cálculo de CMC (robustez + baseline) ────────────
@@ -229,7 +233,7 @@ function classificarUC(c) {
 }
 
 // Diagnóstico por UG: classifica clientes, calcula budgets e métricas.
-function diagnosticarUG(ug) {
+export function diagnosticarUG(ug) {
   const clientes = ug.clientes.map(c => ({ ...c, categoria: classificarUC(c) }));
   const fixas = clientes.filter(c =>
     c.categoria === "fixa-travada" ||
@@ -240,8 +244,10 @@ function diagnosticarUG(ug) {
   const ucGer = clientes.find(c => c.ehUCGeradora);
 
   const genCmc = ucGer?.cmc || 0;
-  // distribuivel: capacidade menos o autoconsumo da geradora (que vai antes do rateio).
-  const distribuivel = Math.max(0, (ug.capacidade_kwh || 0) - genCmc);
+  // distribuível type-aware (fonte única): GD1 = capacidade cheia (geradora participa do
+  // rateio); GD2 = capacidade − autoconsumo da geradora. Antes subtraía genCmc até em GD1,
+  // distorcendo rateioIdealAlvo e o pct_inicial de órfãs em UGs GD1.
+  const distribuivel = distribuivelDaUG(ug);
 
   // demanda dos beneficiários SERVIDOS pelo rateio (rateio > 0). Um cliente a 0%
   // não é servido por esta UG (UC sem UG efetiva) — não entra no carregamento.
@@ -441,6 +447,29 @@ function obterMotivo(c, delta) {
   return "descer-ajuste";
 }
 
+// Fração do gap aplicada por execução, ponderada pela URGÊNCIA do cliente.
+// Crítico/excessivo (perto de problema) convergem mais rápido; baixo/alto a um ritmo
+// intermediário; ideal no ritmo base (protege estáveis, anti-churn). Limitada a PASSO_MAX_FRAC.
+export function fracPassoUrgencia(nivel) {
+  const base = OPT_PARAMS.PASSO_BASE;
+  let mult = 1;
+  if (nivel === "critico" || nivel === "excessivo") mult = OPT_PARAMS.PASSO_MULT_URGENTE;
+  else if (nivel === "baixo" || nivel === "alto")    mult = OPT_PARAMS.PASSO_MULT_ATENCAO;
+  return Math.min(base * mult, OPT_PARAMS.PASSO_MAX_FRAC);
+}
+
+// Passo inteiro (pp) a aplicar neste ciclo: gap × fração de urgência, com clamp para
+// nunca ultrapassar o alvo e mínimo de ±MIN_DELTA_INCREMENTAL na direção do gap.
+// Deve ser chamada apenas fora da dead-zone (|gap| ≥ DEAD_ZONE_PP).
+export function passoConvergencia(gap, nivel) {
+  const real = gap * fracPassoUrgencia(nivel);
+  // clamp: |passo| ≤ |gap| (não ultrapassa o alvo)
+  const limitado = Math.sign(gap) * Math.min(Math.abs(real), Math.abs(gap));
+  let passoInt = Math.round(limitado);
+  if (passoInt === 0) passoInt = Math.sign(gap) * OPT_PARAMS.MIN_DELTA_INCREMENTAL;
+  return passoInt;
+}
+
 // ─── Estágio 2: ajuste interno por UG ────────────────────────────────
 function ajusteInternoUG(d) {
   const ajustaveis = d.ajustaveis.filter(c => c.cmc > 0);
@@ -463,32 +492,32 @@ function ajusteInternoUG(d) {
       : d.S_aj / ajustaveis.length;
   });
 
-  // 3. Aplica passo de convergência + dead-zone (resolve Inputs 2, 4, 6, 7).
-  // Cada UC se move 1/6 do gap entre seu alvo e seu rateio atual.
+  // 3. Aplica passo de convergência PONDERADO POR URGÊNCIA + dead-zone (resolve Inputs 2, 4, 6, 7).
+  // Cada UC se move uma fração do gap entre alvo e rateio atual; a fração escala com a
+  // urgência (perto de crítico/excessivo converge mais rápido; estável no ritmo base).
   // - Dead-zone protege clientes estáveis (|gap| < 2pp → sem mudança).
-  // - Não força sum = S_aj em uma única execução: se a planilha vem com soma ≠ 100,
-  //   convergência acontece gradualmente (resolve Input 2/6: sem big-bang correction).
+  // - Não força sum = S_aj em uma única execução: convergência acontece gradualmente.
   const sugestoes = {};
+  const passosReais = {}; // passo real-valued (pré-arredondamento) p/ o corretor de resíduo
   ajustaveis.forEach(c => {
     const gap = alvos[c.uc] - c.rateio_pct;
     if (Math.abs(gap) < OPT_PARAMS.DEAD_ZONE_PP) {
+      passosReais[c.uc] = 0;
       sugestoes[c.uc] = c.rateio_pct;
       return;
     }
-    const passoReal = gap * OPT_PARAMS.PASSO_CONVERGENCIA;
-    let passoInt = Math.round(passoReal);
-    // Garante pelo menos ±1pp de movimento na direção do gap (evita stall por arredondamento).
-    if (passoInt === 0) passoInt = Math.sign(gap);
-    sugestoes[c.uc] = c.rateio_pct + passoInt;
+    const frac = fracPassoUrgencia(c.status?.nivel);
+    passosReais[c.uc] = Math.sign(gap) * Math.min(Math.abs(gap * frac), Math.abs(gap));
+    sugestoes[c.uc] = c.rateio_pct + passoConvergencia(gap, c.status?.nivel);
   });
 
   // 4. Corretor de RESÍDUO DE ARREDONDAMENTO apenas (não da drift completa).
-  // O movimento natural deveria fechar (1/6 do gap_total). Diferença = erro de rounding.
+  // shiftEsperado = soma dos passos reais (já ponderados por urgência, pré-arredondamento);
+  // shiftReal = soma dos passos inteiros aplicados. Diferença = erro de arredondamento.
   // Limita correção a ±2pp por execução para não criar jumps artificiais (resolve Input 2/6).
   const S_fixaInt = Math.round(d.S_fixa);
-  const S_ajInt = 100 - S_fixaInt;
   const sumAtualAj = ajustaveis.reduce((s, c) => s + c.rateio_pct, 0);
-  const shiftEsperado = (S_ajInt - sumAtualAj) * OPT_PARAMS.PASSO_CONVERGENCIA;
+  const shiftEsperado = ajustaveis.reduce((s, c) => s + (passosReais[c.uc] || 0), 0);
   const shiftReal = ajustaveis.reduce((s, c) => s + sugestoes[c.uc], 0) - sumAtualAj;
   const residual = Math.round(shiftEsperado - shiftReal);
   if (residual !== 0 && ajustaveis.length > 0) {
@@ -770,8 +799,11 @@ export function construirCenarioProposto(ug, planoGlobal) {
   const mapAjusteInterno = new Map(acoesInternas.map(a => [a.cliente.uc, a]));
   const ucsSaindo = new Set(realocOut.map(r => r.cliente.uc));
 
-  const ucGer = ug.clientes.find(c => c.ehUCGeradora);
-  const distribuivel = Math.max(0, (ug.capacidade_kwh || 0) - (ucGer?.cmc || 0));
+  // Distribuível type-aware — fonte única (GD1 = capacidade; GD2 = cap − autoconsumo
+  // da geradora). Mesmo denominador usado pelo carregamento e pelo modo edição
+  // (simularCenario → distribuivelDaUG); antes subtraía genCmc até em GD1, o que fazia
+  // a barra "% consome" divergir entre visualização e edição.
+  const distribuivel = distribuivelDaUG(ug);
 
   const linhas = ug.clientes.map(c => {
     if (ucsSaindo.has(c.uc)) {
@@ -818,8 +850,9 @@ export function construirCenarioProposto(ug, planoGlobal) {
     l.pulmaoAtualMeses = l.cmc > 0 ? (l.cliente.saldo || 0) / l.cmc : null;
   });
 
-  // Renormaliza, recalcula estado e projeção, retorna cenário completo.
-  renormalizarSomaParaCem(linhas);
+  // Fecha a soma em 100% CIENTE DE COLCHÃO (corta dos acolchoados, protege os famintos),
+  // recalcula estado e projeção. A edição manual usa renormalizarSomaParaCem (uniforme).
+  squeezeColchaoAware(linhas);
   rederivarEstadoEProjecao(linhas, distribuivel);
 
   return montarCenarioFinal(ug, linhas, distribuivel, {
@@ -835,13 +868,33 @@ export function construirCenarioProposto(ug, planoGlobal) {
 // pelo construirCenarioComOverrides — modo edição manual no Comparativo).
 // ═══════════════════════════════════════════════════════════════════
 
+// Predicado de "fixa" para fechamento de soma: geradora, saindo, ou orientada-fixa
+// (cliente novo sem CMC mas com % manual). Essas preservam seu rateio; o resíduo vai
+// para os flexíveis. Compartilhado por renormalizarSomaParaCem e squeezeColchaoAware.
+const ehFixaOrient = l => l.cmc === 0 && (l.cliente.media_consumo || 0) > 0 && l.rateioAtual > 0;
+const ehFixaParaRenorm = l => l.cliente.ehUCGeradora || l.estado === "saindo" || ehFixaOrient(l);
+
+// Arredonda os rateios para inteiro e zera o resíduo distribuindo ±1pp nos maiores
+// flexíveis (tail compartilhado). MUTA o array.
+function arredondarEZerarResiduo(linhas, flex) {
+  linhas.forEach(l => { l.rateioProposto = Math.round(l.rateioProposto); });
+  let residuo = 100 - linhas.reduce((s, l) => s + l.rateioProposto, 0);
+  if (residuo !== 0 && flex.length > 0) {
+    const ord = [...flex].sort((a, b) => b.rateioProposto - a.rateioProposto);
+    let i = 0, guard = 500;
+    while (residuo !== 0 && guard-- > 0) {
+      const l = ord[i % ord.length];
+      if (residuo > 0) { l.rateioProposto += 1; residuo -= 1; }
+      else if (l.rateioProposto > 0) { l.rateioProposto -= 1; residuo += 1; }
+      i++;
+    }
+  }
+}
+
 // Renormaliza os rateios propostos das linhas para somar EXATAMENTE 100%.
 // Fixas (geradora, saindo, orientadas-fixas) preservam seu %; o resíduo é
 // distribuído proporcionalmente aos flexíveis. MUTA o array de linhas.
 export function renormalizarSomaParaCem(linhas) {
-  const ehFixaOrient = l => l.cmc === 0 && (l.cliente.media_consumo || 0) > 0 && l.rateioAtual > 0;
-  const ehFixaParaRenorm = l => l.cliente.ehUCGeradora || l.estado === "saindo" || ehFixaOrient(l);
-
   const fixasRn = linhas.filter(ehFixaParaRenorm);
   const flexRn  = linhas.filter(l => !ehFixaParaRenorm(l));
   const sFixaRn = fixasRn.reduce((s, l) => s + l.rateioProposto, 0);
@@ -859,19 +912,68 @@ export function renormalizarSomaParaCem(linhas) {
     }
   }
 
-  // Arredonda e zera resíduo distribuindo ±1pp nos maiores valores.
-  linhas.forEach(l => { l.rateioProposto = Math.round(l.rateioProposto); });
-  let residuo = 100 - linhas.reduce((s, l) => s + l.rateioProposto, 0);
-  if (residuo !== 0 && flexRn.length > 0) {
-    const ord = [...flexRn].sort((a, b) => b.rateioProposto - a.rateioProposto);
-    let i = 0, guard = 500;
-    while (residuo !== 0 && guard-- > 0) {
-      const l = ord[i % ord.length];
-      if (residuo > 0) { l.rateioProposto += 1; residuo -= 1; }
-      else if (l.rateioProposto > 0) { l.rateioProposto -= 1; residuo += 1; }
-      i++;
+  arredondarEZerarResiduo(linhas, flexRn);
+}
+
+// Fecha a soma em 100% CIENTE DE COLCHÃO (cushion-aware) — usado SÓ na proposta do
+// otimizador (construirCenarioProposto), nunca na edição manual. Em vez de escalar todos
+// os flexíveis pelo mesmo fator, distribui o ajuste necessário ponderado pela razão
+// saldo/CMC vs. colchão ideal: sob sobrescrição (corte), debita de quem tem excesso de
+// colchão e protege quem está no/abaixo do mínimo (crítico/baixo, entrantes famintos);
+// sob subutilização (sobra), credita primeiro quem tem maior déficit. Fallback uniforme
+// quando não há variância de colchão. MUTA o array de linhas.
+export function squeezeColchaoAware(linhas) {
+  const fixas = linhas.filter(ehFixaParaRenorm);
+  const flex  = linhas.filter(l => !ehFixaParaRenorm(l));
+  const sFixa = fixas.reduce((s, l) => s + l.rateioProposto, 0);
+  const sFlexAlvo = Math.max(0, 100 - sFixa);
+  const sFlexRaw  = flex.reduce((s, l) => s + l.rateioProposto, 0);
+  const delta = sFlexAlvo - sFlexRaw; // < 0 cortar · > 0 creditar
+
+  const fallbackUniforme = () => {
+    if (sFlexRaw > 0) {
+      const fator = sFlexAlvo / sFlexRaw;
+      flex.forEach(l => { l.rateioProposto = l.rateioProposto * fator; });
+    } else if (sFlexAlvo > 0) {
+      const elig = flex.filter(l => l.cmc > 0);
+      const totalCmc = elig.reduce((s, l) => s + l.cmc, 0);
+      if (totalCmc > 0) elig.forEach(l => { l.rateioProposto = (l.cmc / totalCmc) * sFlexAlvo; });
+    }
+  };
+
+  if (flex.length > 0 && Math.abs(delta) > 1e-9) {
+    const RI = OPT_PARAMS.RAZAO_IDEAL;
+    const razao = l => (l.cmc > 0 ? (l.cliente.saldo || 0) / l.cmc : 0);
+    // Peso por colchão conforme a direção do ajuste.
+    const pesoDe = l => delta < 0
+      ? Math.max(0, razao(l) - RI)   // corte: tira de quem tem excesso de colchão
+      : Math.max(0, RI - razao(l));  // crédito: dá a quem tem déficit
+    const somaPeso = flex.reduce((s, l) => s + pesoDe(l), 0);
+
+    if (somaPeso <= 0) {
+      fallbackUniforme(); // sem variância de colchão → comportamento uniforme
+    } else {
+      // Distribui `delta` proporcional ao peso; redistribui o que clampar em 0.
+      let ativos = flex.map(l => ({ l, p: pesoDe(l) })).filter(a => a.p > 0);
+      let restante = delta;
+      let guard = 50;
+      while (Math.abs(restante) > 1e-9 && ativos.length > 0 && guard-- > 0) {
+        const somaAtivos = ativos.reduce((s, a) => s + a.p, 0);
+        if (somaAtivos <= 0) break;
+        let sobra = 0;
+        const novos = [];
+        ativos.forEach(a => {
+          const nv = a.l.rateioProposto + restante * (a.p / somaAtivos);
+          if (nv < 0) { sobra += nv; a.l.rateioProposto = 0; } // clampou → devolve o excesso
+          else { a.l.rateioProposto = nv; novos.push(a); }
+        });
+        restante = sobra;   // só negativo (corte não absorvido) entra na próxima volta
+        ativos = novos;
+      }
     }
   }
+
+  arredondarEZerarResiduo(linhas, flex);
 }
 
 // Re-deriva o estado de cada linha após mudança no rateioProposto e calcula

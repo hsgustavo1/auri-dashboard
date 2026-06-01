@@ -1,19 +1,17 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { RefreshCw, FileText } from "lucide-react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
 import {
   construirCenarioProposto,
   construirCenarioComOverrides,
-  simularCenario,
   analisarCenario,
   distribuivelDaUG,
-  rateioPropostoDoCliente,
   carregamentoUG,
   capacidadeEfetivaUG,
   projetarHorizonte,
 } from "./utils/business";
-import { Edit3, RotateCcw, Plus, X, Zap } from "lucide-react";
+import { Edit3, RotateCcw } from "lucide-react";
 import { UG_NOMES } from "./config";
 import FormularioRateio from "./components/FormularioRateio";
 
@@ -21,6 +19,29 @@ import FormularioRateio from "./components/FormularioRateio";
 function fmtBRL(v) {
   if (v == null) return "—";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Overrides manuais de rateio (Comparativo), persistidos no navegador.
+const OVERRIDES_KEY = "auri.rateioOverrides.v1";
+
+// Estado React espelhado em localStorage — sobrevive a refresh/fechar a aba.
+function useLocalStorageState(key, initial) {
+  const [val, setVal] = useState(() => {
+    try {
+      const s = localStorage.getItem(key);
+      return s ? JSON.parse(s) : initial;
+    } catch {
+      return initial;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch {
+      /* quota/SSR — ignora */
+    }
+  }, [key, val]);
+  return [val, setVal];
 }
 
 // ─── UI Atoms ────────────────────────────────────────────────
@@ -343,6 +364,15 @@ function DistribuicaoUnificada({ ug, onClickCliente }) {
   );
 }
 
+// Rateio FINAL proposto p/ o cliente (após squeeze/renormalização do cenário completo),
+// consistente com a aba Comparativo. O lookup cru rateioPropostoDoCliente devolve o valor
+// do estágio 2 (antes do squeeze), que divergia do que o Comparativo mostra.
+function rateioFinalDoCliente(cliente, ug, planoGlobal) {
+  if (!ug || !cliente) return cliente?.rateio_pct || 0;
+  const linha = construirCenarioProposto(ug, planoGlobal).linhas.find(l => l.cliente.uc === cliente.uc);
+  return linha ? linha.rateioProposto : (cliente.rateio_pct || 0);
+}
+
 // ─── Helper: monta os 13 pontos do gráfico do cliente ─────────
 // Estrutura: 6 últimos meses históricos → ponto "Hoje" → 6 meses projetados.
 // Cada ponto pode ter combinações de: saldoHist, consumoHist, projAtual, projOtimizado.
@@ -387,7 +417,7 @@ function montarChartData(cliente, ug, planoGlobal) {
   if (!podeProjetar) return pontos;
 
   const pctAtual = cliente.rateio_pct || 0;
-  const pctProposto = rateioPropostoDoCliente(cliente, ug, planoGlobal);
+  const pctProposto = rateioFinalDoCliente(cliente, ug, planoGlobal);
   const projetar = (pct, n) => Math.max(0, saldoNow + n * ((pct / 100) * distrib - cmc));
 
   for (let n = 1; n <= N_PROJ; n++) {
@@ -405,7 +435,7 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
   if (!cliente) return null;
   const ug = ugsValidadas?.find(u => u.nome === cliente.ug) || null;
   const chartData = montarChartData(cliente, ug, planoGlobal);
-  const pctProposto = rateioPropostoDoCliente(cliente, ug, planoGlobal);
+  const pctProposto = rateioFinalDoCliente(cliente, ug, planoGlobal);
   // GD1 geradora pode ter rateio otimizado também; GD2 geradora não projeta.
   const propMudouRateio = ug && !(cliente.ehUCGeradora && ug.tipo === "GD2") && Math.round(pctProposto) !== Math.round(cliente.rateio_pct || 0);
   return (
@@ -1134,10 +1164,14 @@ function formatarPulmao(meses) {
   return { label: `${meses.toFixed(1)}m pulmão`, cor: "#6d4a8c" };
 }
 
-function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel = false, onMudarPct }) {
+function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel = false, onMudarPct, pctOtimizador = null }) {
   const { cliente, rateioAtual, rateioProposto, estado, origem, destino, origemMudanca, cmc, pulmaoAtualMeses, projecao } = linha;
   const podeEditar = editavel && estado !== "saindo" && !cliente.ehUCGeradora;
   const editadoManualmente = origemMudanca === "manual";
+  // Valor USADO difere da proposta do otimizador? (alerta de divergência)
+  const podeDivergir = !cliente.ehUCGeradora && estado !== "saindo";
+  const divergeOtim = podeDivergir && pctOtimizador != null
+    && Math.round(rateioProposto) !== Math.round(pctOtimizador);
   const delta = rateioProposto - rateioAtual;
   const ehGeradora = cliente.ehUCGeradora;
 
@@ -1232,6 +1266,14 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
               </span>
             )}
           </span>
+          {divergeOtim && (
+            <span
+              className="text-[8px] px-1 py-px bg-sun-200 text-sun-600 border border-sun-400/60 uppercase tracking-wider whitespace-nowrap"
+              title={`Valor manual em uso. O otimizador propôs ${Math.round(pctOtimizador)}%.`}
+            >
+              manual ≠ otim. {Math.round(pctOtimizador)}%
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2 mb-1">
           <span className="text-[8px] uppercase tracking-[0.08em] text-stone-500 w-12 text-right shrink-0">recebe</span>
@@ -1435,23 +1477,37 @@ function PainelRiscos({ riscos, horizonte, onClickCliente }) {
 
 function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFormulario }) {
   const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
-  // overrides: { [uc]: pctEditado }. null quando NÃO em modo edição.
-  const [overrides, setOverrides] = useState(null);
-  const editando = overrides !== null;
+  // Overrides manuais PERSISTENTES por UG: { [ugNome]: { [uc]: pct } }.
+  // Persistem em localStorage (sobrevivem a refresh/troca de UG/navegação) e são
+  // OPERATIVOS — entram no cenário, nas métricas e no Formulário Equatorial.
+  const [overridesPorUG, setOverridesPorUG] = useLocalStorageState(OVERRIDES_KEY, {});
+  const [editMode, setEditMode] = useState(false); // só controla a exibição dos inputs
   const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
+  const overridesUG = overridesPorUG[ugNome] || {};
+  const temOverrides = Object.keys(overridesUG).length > 0;
 
-  // Sempre que mudar de UG, sai do modo edição (evita carregar overrides de outra UG)
-  const mudarUG = (novoNome) => { setOverrides(null); setUgNome(novoNome); };
+  // Troca de UG mantém os overrides (são por UG); só fecha os inputs.
+  const mudarUG = (novoNome) => { setEditMode(false); setUgNome(novoNome); };
 
+  // Cenário OPERATIVO: usa os overrides manuais quando existem; senão, a proposta crua do otimizador.
   const cenario = useMemo(
     () => {
       if (!ug) return null;
-      return editando
-        ? construirCenarioComOverrides(ug, planoGlobal, overrides, { renormalizar: false })
+      return temOverrides
+        ? construirCenarioComOverrides(ug, planoGlobal, overridesUG, { renormalizar: false })
         : construirCenarioProposto(ug, planoGlobal);
     },
-    [ug, planoGlobal, editando, overrides]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [ug, planoGlobal, overridesPorUG, ugNome]
   );
+
+  // Baseline do otimizador (sem overrides) — referência p/ detectar "valor usado ≠ otimizador".
+  const baseOtimizador = useMemo(() => {
+    if (!ug) return {};
+    const m = {};
+    construirCenarioProposto(ug, planoGlobal).linhas.forEach(l => { m[l.cliente.uc] = l.rateioProposto; });
+    return m;
+  }, [ug, planoGlobal]);
   const analise = useMemo(
     () => (cenario ? analisarCenario(cenario, 6) : null),
     [cenario]
@@ -1476,6 +1532,14 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
   const { linhas, metricas } = cenario;
   const somaDesviada = Math.abs(metricas.somaProposta - 100) >= 1;
 
+  // Linhas cujo valor USADO difere da proposta do otimizador (alerta solicitado).
+  const linhasDivergentes = linhas.filter(l =>
+    !l.cliente.ehUCGeradora && l.estado !== "saindo" &&
+    baseOtimizador[l.cliente.uc] != null &&
+    Math.round(l.rateioProposto) !== Math.round(baseOtimizador[l.cliente.uc])
+  );
+  const nDivergentes = linhasDivergentes.length;
+
   // ─── Headline de carregamento (objetivo real) ───────────────────
   const estadoProp = estadoCarregamento(metricas.carregamentoProposto);
   const clientesPropostos = linhas.filter(l => l.estado !== "saindo").map(l => l.cliente);
@@ -1485,47 +1549,43 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
   // UG estruturalmente subcarregada e sem alavanca (nenhuma órfã/swap entrando)
   const subcarregadaSemLever = metricas.carregamentoProposto < 95 && !temEntrada;
 
-  const entrarEdicao = () => {
-    // Inicia overrides com os valores propostos atuais (do otimizador)
-    const init = {};
-    cenario.linhas.forEach(l => {
-      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) {
-        init[l.cliente.uc] = l.rateioProposto;
+  // Atualiza os overrides da UG atual e persiste. updater(atual) → novo mapa;
+  // mapa vazio/null remove a UG do store (volta à proposta do otimizador).
+  const setOverridesUG = (updater) => {
+    setOverridesPorUG(prev => {
+      const atual = prev[ugNome] || {};
+      const novo = typeof updater === "function" ? updater(atual) : updater;
+      if (!novo || Object.keys(novo).length === 0) {
+        const cp = { ...prev };
+        delete cp[ugNome];
+        return cp;
       }
+      return { ...prev, [ugNome]: novo };
     });
-    setOverrides(init);
   };
 
-  const sairEdicao = () => setOverrides(null);
+  const entrarEdicao = () => setEditMode(true);
+  const sairEdicao = () => setEditMode(false); // mantém os overrides (agora persistem)
 
   const mudarPct = (uc, valor) => {
     const num = Math.max(0, Math.min(100, Number(valor) || 0));
-    setOverrides(prev => ({ ...(prev || {}), [uc]: num }));
+    setOverridesUG(atual => ({ ...atual, [uc]: num }));
   };
 
   const renormalizar = () => {
-    // Aplica renormalização: cria novo cenário com renormalizar:true,
-    // depois usa esses %´s como overrides "limpos".
-    const renormalizado = construirCenarioComOverrides(ug, planoGlobal, overrides, { renormalizar: true });
-    const novosOverrides = {};
+    // Renormaliza p/ soma=100% e grava o resultado como overrides limpos.
+    const renormalizado = construirCenarioComOverrides(ug, planoGlobal, overridesUG, { renormalizar: true });
+    const novos = {};
     renormalizado.linhas.forEach(l => {
       if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) {
-        novosOverrides[l.cliente.uc] = l.rateioProposto;
+        novos[l.cliente.uc] = l.rateioProposto;
       }
     });
-    setOverrides(novosOverrides);
+    setOverridesUG(novos);
   };
 
-  const resetarParaOtimizador = () => {
-    const init = {};
-    const base = construirCenarioProposto(ug, planoGlobal);
-    base.linhas.forEach(l => {
-      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) {
-        init[l.cliente.uc] = l.rateioProposto;
-      }
-    });
-    setOverrides(init);
-  };
+  // Descarta os overrides manuais desta UG → volta à proposta do otimizador.
+  const resetarParaOtimizador = () => setOverridesUG(null);
 
   const denom = cenario.distribuivel || 0;
   const consomeDe = l => denom > 0 ? (l.cmc / denom) * 100 : 0;
@@ -1559,14 +1619,14 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
               ))}
             </select>
           </div>
-          {!editando ? (
+          {!editMode ? (
             <button
               onClick={entrarEdicao}
               className="flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-[0.18em] border border-stone-200 text-stone-600 hover:border-sun-500/60 hover:text-sun-600 transition-colors"
-              title="Editar manualmente os %´s propostos"
+              title="Editar manualmente os %´s — os valores ficam salvos"
             >
               <Edit3 size={14} />
-              Editar rateio proposto
+              {temOverrides ? "Editar rateio manual" : "Editar rateio proposto"}
             </button>
           ) : (
             <>
@@ -1597,7 +1657,7 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
         </div>
       </div>
 
-      {editando && somaDesviada && (
+      {somaDesviada && (
         <div className="mb-4 border border-sun-400 bg-sun-100/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
           <div className="flex items-center gap-3">
             <span className="text-sun-600 text-lg leading-none">⚠</span>
@@ -1611,6 +1671,24 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
             className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-sun-500/60 bg-sun-100 text-sun-600 hover:bg-sun-200 transition-colors"
           >
             Renormalizar p/ 100%
+          </button>
+        </div>
+      )}
+
+      {nDivergentes > 0 && (
+        <div className="mb-4 border border-sun-400 bg-sun-100/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3">
+            <span className="text-sun-600 text-lg leading-none">●</span>
+            <p className="text-xs text-stone-700">
+              <span className="font-mono text-sun-600 font-bold">{nDivergentes}</span> valor{nDivergentes > 1 ? "es" : ""} manual{nDivergentes > 1 ? "is" : ""} diferente{nDivergentes > 1 ? "s" : ""} da proposta do otimizador nesta UG.
+              {" "}Estão sendo usados no lugar do otimizador — inclusive no Formulário Equatorial gerado.
+            </p>
+          </div>
+          <button
+            onClick={resetarParaOtimizador}
+            className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-stone-200 text-stone-600 hover:border-sun-500/60 hover:text-sun-600 transition-colors whitespace-nowrap"
+          >
+            Voltar ao otimizador
           </button>
         </div>
       )}
@@ -1708,8 +1786,9 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
               maxPct={maxPct}
               denom={denom}
               onClickCliente={onClickCliente}
-              editavel={editando}
+              editavel={editMode}
               onMudarPct={mudarPct}
+              pctOtimizador={baseOtimizador[l.cliente.uc]}
             />
           ))}
         </div>
@@ -1774,663 +1853,6 @@ function TelaComparativo({ ugsValidadas, planoGlobal, onClickCliente, onAbrirFor
   );
 }
 
-// ─── TelaSimulador ────────────────────────────────────────────
-// Simulação livre: usuário ajusta %´s de uma UG (sliders/inputs) e vê
-// comparação lado a lado com cenário Atual e Otimizado. Não persiste —
-// experimentação pura. Compartilha engine com Comparativo via
-// construirCenarioComOverrides em business.js.
-function MetricasResumo({ titulo, soma, carregamento, demanda, capacidade, nClientes, pulmao, nRiscos, destaque, dist }) {
-  const corCar = corCarregamento(carregamento);
-  const corSoma = Math.abs(soma - 100) < 0.5 ? "#2f7a52" : Math.abs(soma - 100) < 5 ? "#c98a1f" : "#a8482a";
-  const cls = destaque === "otimizado" ? "border-sun-400 bg-sun-100/40"
-            : destaque === "simulado"  ? "border-forest-300 bg-forest-50"
-            : "border-stone-200 bg-white shadow-auri-sm";
-  const corTitulo = destaque === "otimizado" ? "#c98a1f"
-                  : destaque === "simulado"  ? "#3a6650"
-                  : "#6b6357";
-  return (
-    <div className={`border ${cls} p-4`}>
-      <div className="text-[10px] uppercase tracking-[0.2em] mb-3" style={{ color: corTitulo }}>{titulo}</div>
-      <div className="grid grid-cols-2 gap-3 mb-3">
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1">Soma</div>
-          <div className="text-xl font-extrabold tracking-tight" style={{ color: corSoma }}>{soma.toFixed(0)}%</div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1">Carregamento</div>
-          <div className="text-xl font-extrabold tracking-tight" style={{ color: corCar }}>{carregamento.toFixed(0)}%</div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1">Demanda</div>
-          <div className="text-sm font-mono text-ink">{demanda.toFixed(0)}<span className="text-stone-600 text-[10px] ml-1">/ {capacidade.toFixed(0)}</span></div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1">Clientes</div>
-          <div className="text-sm font-mono text-ink">{nClientes}</div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1">Pulmão</div>
-          <div className="text-sm font-mono text-ink">{pulmao != null ? `${pulmao.toFixed(1)}m` : "—"}</div>
-        </div>
-        <div>
-          <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1">Riscos 6m</div>
-          <div className="text-sm font-mono" style={{ color: nRiscos === 0 ? "#2f7a52" : nRiscos < 3 ? "#c98a1f" : "#a8482a" }}>{nRiscos}</div>
-        </div>
-      </div>
-      {dist && <CaixaDistribuicao dist={dist} />}
-    </div>
-  );
-}
-
-function ControleClienteSlider({ cliente, valorAtual, valor, onChange, otimizado, ehAdicionado = false, entrandoOtimizador = false, origem, saindo = false, destino, onRemover }) {
-  const delta = valor - valorAtual;
-  const mudouVsOtimizado = otimizado != null && Math.abs(valor - otimizado) >= 1;
-  const borda = ehAdicionado || entrandoOtimizador ? "border-forest-300 bg-forest-50"
-              : saindo       ? "border-terra-500/50 bg-terra-100/40"
-              : "border-stone-200 bg-white shadow-auri-sm";
-  return (
-    <div className={`border p-3 ${borda}`}>
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            {ehAdicionado && (
-              <span className="text-[9px] px-1 py-px bg-forest-100 text-forest-700 border border-forest-300 uppercase shrink-0">← {origem || "outra UG"}</span>
-            )}
-            {entrandoOtimizador && (
-              <span className="text-[9px] px-1 py-px bg-forest-100 text-forest-700 border border-forest-300 uppercase shrink-0">otimizador: ← {origem || "outra UG"}</span>
-            )}
-            {saindo && (
-              <span className="text-[9px] px-1 py-px bg-terra-100 text-terra-600 border border-terra-500/50 uppercase shrink-0">otimizador: → {destino || "outra UG"}</span>
-            )}
-            <span className="text-xs text-ink truncate">{cliente.nome}</span>
-          </div>
-          <div className="text-[10px] text-stone-600 font-mono">
-            CMC {(cliente.cmc || 0).toFixed(0)} · saldo {(cliente.saldo || 0).toFixed(0)} · <span style={{ color: cliente.status?.cor }}>{cliente.status?.label}</span>
-          </div>
-        </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <input
-            type="number"
-            min="0"
-            max="100"
-            step="1"
-            value={valor}
-            onChange={e => onChange(Math.max(0, Math.min(100, Number(e.target.value) || 0)))}
-            className={`font-mono text-sm w-14 text-right px-1.5 py-1 border bg-cream outline-none focus:border-sun-500 ${mudouVsOtimizado ? "border-forest-600 text-forest-700" : "border-stone-200 text-ink"}`}
-          />
-          <span className="text-xs text-stone-600">%</span>
-          {onRemover && (
-            <button
-              onClick={onRemover}
-              className="ml-1 text-stone-400 hover:text-terra-600 transition-colors"
-              title={ehAdicionado ? "Remover cliente adicionado" : "Remover cliente desta UG"}
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-      <input
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        value={valor}
-        onChange={e => onChange(Number(e.target.value))}
-        className="w-full accent-forest-600"
-      />
-      <div className="flex justify-between text-[10px] font-mono mt-1 text-stone-600">
-        <span>{ehAdicionado ? "novo na UG" : `atual ${valorAtual}%`}</span>
-        {otimizado != null && !ehAdicionado && <span className="text-sun-600">otimiz. {Math.round(otimizado)}%</span>}
-        <span style={{ color: delta > 0 ? "#2f7a52" : delta < 0 ? "#a8482a" : "#6b6357" }}>
-          Δ {delta > 0 ? "+" : ""}{delta}pp
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function montarOverridesOtimizados(cenario) {
-  const overrides = {};
-  cenario?.linhas.forEach(l => {
-    if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) overrides[l.cliente.uc] = l.rateioProposto;
-  });
-  return overrides;
-}
-
-function TelaSimulador({ ugsValidadas, planoGlobal, clientes }) {
-  const [ugNome, setUgNome] = useState(ugsValidadas[0]?.nome || "");
-  const ug = ugsValidadas.find(u => u.nome === ugNome) || ugsValidadas[0];
-
-  const cenarioOtimizado = useMemo(
-    () => (ug ? construirCenarioProposto(ug, planoGlobal) : null),
-    [ug, planoGlobal]
-  );
-
-  // Estado de simulação
-  const [overrides, setOverrides] = useState(() => montarOverridesOtimizados(cenarioOtimizado)); // { uc: pct }
-  const [capacidadeOverride, setCapacidadeOverride] = useState(null); // kWh ou null
-  const [adicionados, setAdicionados] = useState([]);   // [clienteObj] de outras UGs
-  const [removidos, setRemovidos] = useState([]);        // [uc] removidos desta UG
-  const [ucParaAdd, setUcParaAdd] = useState("");        // seleção do dropdown
-
-  const capReal = ug?.capacidade_kwh || 0;
-
-  const mudarUG = (novoNome) => {
-    const novaUG = ugsValidadas.find(u => u.nome === novoNome);
-    const novoCenario = novaUG ? construirCenarioProposto(novaUG, planoGlobal) : null;
-    setUgNome(novoNome);
-    setOverrides(montarOverridesOtimizados(novoCenario));
-    setCapacidadeOverride(null);
-    setAdicionados([]);
-    setRemovidos([]);
-    setUcParaAdd("");
-  };
-
-  const optsSim = useMemo(() => ({
-    overrides,
-    capacidade: capacidadeOverride,
-    adicionados,
-    removidos,
-    renormalizar: false,
-  }), [overrides, capacidadeOverride, adicionados, removidos]);
-
-  const cenarioSimulado = useMemo(
-    () => (ug ? simularCenario(ug, planoGlobal, optsSim) : null),
-    [ug, planoGlobal, optsSim]
-  );
-
-  // Cenário Atual = "se nada mudar"
-  const cenarioAtual = useMemo(() => {
-    if (!ug) return null;
-    const ov = {};
-    ug.clientes.forEach(c => { if (!c.ehUCGeradora) ov[c.uc] = c.rateio_pct || 0; });
-    return construirCenarioComOverrides(ug, planoGlobal, ov, { renormalizar: false });
-  }, [ug, planoGlobal]);
-
-  const analiseSimulada = useMemo(() => cenarioSimulado ? analisarCenario(cenarioSimulado, 6) : null, [cenarioSimulado]);
-  const analiseAtual    = useMemo(() => cenarioAtual    ? analisarCenario(cenarioAtual,    6) : null, [cenarioAtual]);
-  const analiseOtim     = useMemo(() => cenarioOtimizado ? analisarCenario(cenarioOtimizado, 6) : null, [cenarioOtimizado]);
-
-  // Clientes disponíveis para adicionar: de outras UGs ou órfãos, não-geradora,
-  // não já nesta UG e não já adicionados.
-  const ucsNaUG = useMemo(() => new Set((ug?.clientes || []).map(c => c.uc)), [ug]);
-  const disponiveisParaAdd = useMemo(() => {
-    const jaAdd = new Set(adicionados.map(c => c.uc));
-    return (clientes || [])
-      .filter(c => !c.ehUCGeradora && !ucsNaUG.has(c.uc) && !jaAdd.has(c.uc))
-      .sort((a, b) => (a.ug || "ZZZ").localeCompare(b.ug || "ZZZ") || a.nome.localeCompare(b.nome));
-  }, [clientes, ucsNaUG, adicionados]);
-
-  if (!ug || !cenarioSimulado) {
-    return <p className="text-stone-600 text-sm">Nenhuma UG carregada.</p>;
-  }
-
-  const mudarPct = (uc, valor) => setOverrides(prev => ({ ...prev, [uc]: valor }));
-
-  const resetarAtual = () => {
-    const nov = {};
-    ug.clientes.forEach(c => { if (!c.ehUCGeradora) nov[c.uc] = c.rateio_pct || 0; });
-    setOverrides(nov); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
-  };
-  const resetarOtimizado = () => {
-    setOverrides(montarOverridesOtimizados(cenarioOtimizado)); setCapacidadeOverride(null); setAdicionados([]); setRemovidos([]);
-  };
-  const renormalizarSimulado = () => {
-    const renorm = simularCenario(ug, planoGlobal, { ...optsSim, renormalizar: true });
-    const nov = {};
-    renorm.linhas.forEach(l => {
-      if (l.estado !== "saindo" && !l.cliente.ehUCGeradora) nov[l.cliente.uc] = l.rateioProposto;
-    });
-    setOverrides(nov);
-  };
-
-  const adicionarCliente = () => {
-    if (!ucParaAdd) return;
-    const cli = disponiveisParaAdd.find(c => c.uc === ucParaAdd);
-    if (!cli) return;
-    setAdicionados(prev => [...prev, cli]);
-    setRemovidos(prev => prev.filter(uc => uc !== cli.uc)); // caso tenha sido removido antes
-    setUcParaAdd("");
-  };
-  const removerCliente = (uc, ehAdicionado) => {
-    if (ehAdicionado) {
-      setAdicionados(prev => prev.filter(c => c.uc !== uc));
-    } else {
-      setRemovidos(prev => prev.includes(uc) ? prev : [...prev, uc]);
-    }
-    setOverrides(prev => { const n = { ...prev }; delete n[uc]; return n; });
-  };
-  const restaurarCliente = (uc) => setRemovidos(prev => prev.filter(x => x !== uc));
-
-  const ucsAdicionados = new Set(adicionados.map(c => c.uc));
-  const clientesRemovidos = ug.clientes.filter(c => removidos.includes(c.uc));
-
-  // Inclui clientes "saindo" (otimizador propõe realocar p/ fora) — devem
-  // aparecer para o usuário enxergar e decidir, não sumir da lista.
-  const clientesPraEditar = cenarioSimulado.linhas
-    .filter(l => !l.cliente.ehUCGeradora)
-    .sort((a, b) => b.rateioProposto - a.rateioProposto);
-
-  const otimizadoPorUc = {};
-  cenarioOtimizado?.linhas.forEach(l => { otimizadoPorUc[l.cliente.uc] = l.rateioProposto; });
-
-  const somaDesviada = Math.abs(cenarioSimulado.metricas.somaProposta - 100) >= 1;
-  const capSimulada = capacidadeOverride != null ? capacidadeOverride : capReal;
-  const capMudou = capacidadeOverride != null && Math.round(capacidadeOverride) !== Math.round(capReal);
-
-  return (
-    <div>
-      <div className="mb-6 flex items-end justify-between flex-wrap gap-4">
-        <div>
-          <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>Simulador "E se?"</h2>
-          <p className="text-xs text-stone-600">Experimentação livre: ajuste %´s, capacidade da UG e mova clientes entre UGs — vê o impacto na hora, sem afetar a base.</p>
-        </div>
-        <div className="flex items-end gap-3">
-          <div>
-            <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Unidade Geradora</label>
-            <select
-              value={ugNome}
-              onChange={e => mudarUG(e.target.value)}
-              className="bg-bone border border-stone-200 px-4 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60 min-w-[200px]"
-            >
-              {ugsValidadas.map(u => (
-                <option key={u.nome} value={u.nome}>{u.nome} · {u.tipo}</option>
-              ))}
-            </select>
-          </div>
-          <button
-            onClick={resetarAtual}
-            className="px-3 py-2 text-xs uppercase tracking-[0.18em] border border-stone-200 text-stone-600 hover:border-stone-400 transition-colors"
-            title="Volta aos % atualmente em vigor e descarta movimentações"
-          >
-            <RotateCcw size={12} className="inline mr-1" />
-            Atual
-          </button>
-          <button
-            onClick={resetarOtimizado}
-            className="px-3 py-2 text-xs uppercase tracking-[0.18em] border border-sun-500/60 text-sun-600 hover:bg-sun-100 transition-colors"
-            title="Volta aos % propostos pelo otimizador e descarta movimentações"
-          >
-            <RotateCcw size={12} className="inline mr-1" />
-            Otimizado
-          </button>
-        </div>
-      </div>
-
-      {somaDesviada && (
-        <div className="mb-4 border border-sun-400 bg-sun-100/60 px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
-          <div className="flex items-center gap-3">
-            <span className="text-sun-600 text-lg leading-none">⚠</span>
-            <p className="text-xs text-stone-700">
-              Soma simulada está em <span className="font-mono text-sun-600 font-bold">{cenarioSimulado.metricas.somaProposta.toFixed(0)}%</span>.
-              Renormalizar ajusta proporcionalmente para fechar 100%.
-            </p>
-          </div>
-          <button
-            onClick={renormalizarSimulado}
-            className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-sun-500/60 bg-sun-100 text-sun-600 hover:bg-sun-200 transition-colors"
-          >
-            Renormalizar p/ 100%
-          </button>
-        </div>
-      )}
-
-      {/* 3 cenários lado a lado */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        {analiseAtual && (
-          <MetricasResumo
-            titulo="ATUAL"
-            soma={cenarioAtual.metricas.somaProposta}
-            carregamento={cenarioAtual.metricas.carregamentoProposto}
-            demanda={cenarioAtual.metricas.demandaProposta}
-            capacidade={cenarioAtual.metricas.capacidade}
-            nClientes={cenarioAtual.metricas.nClientesProposto}
-            pulmao={analiseAtual.pulmaoAtual}
-            nRiscos={analiseAtual.riscos.length}
-            dist={analiseAtual.distAtual}
-          />
-        )}
-        {analiseOtim && (
-          <MetricasResumo
-            titulo="OTIMIZADO"
-            soma={cenarioOtimizado.metricas.somaProposta}
-            carregamento={cenarioOtimizado.metricas.carregamentoProposto}
-            demanda={cenarioOtimizado.metricas.demandaProposta}
-            capacidade={cenarioOtimizado.metricas.capacidade}
-            nClientes={cenarioOtimizado.metricas.nClientesProposto}
-            pulmao={analiseOtim.pulmaoProposto}
-            nRiscos={analiseOtim.riscos.length}
-            destaque="otimizado"
-            dist={analiseOtim.distProposta}
-          />
-        )}
-        {analiseSimulada && (
-          <MetricasResumo
-            titulo="SIMULADO"
-            soma={cenarioSimulado.metricas.somaProposta}
-            carregamento={cenarioSimulado.metricas.carregamentoProposto}
-            demanda={cenarioSimulado.metricas.demandaProposta}
-            capacidade={cenarioSimulado.metricas.capacidade}
-            nClientes={cenarioSimulado.metricas.nClientesProposto}
-            pulmao={analiseSimulada.pulmaoProposto}
-            nRiscos={analiseSimulada.riscos.length}
-            destaque="simulado"
-            dist={analiseSimulada.distProposta}
-          />
-        )}
-      </div>
-
-      {/* Controles de capacidade + movimentação cross-UG */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-        {/* Override de capacidade */}
-        <div className="border border-stone-200 bg-white shadow-auri-sm p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Zap size={14} className="text-sun-600" />
-            <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Capacidade da UG (simulada)</h3>
-          </div>
-          <div className="flex items-center gap-3 mb-2">
-            <input
-              type="range"
-              min="0"
-              max={Math.max(Math.round(capReal * 2), 1)}
-              step="50"
-              value={capSimulada}
-              onChange={e => setCapacidadeOverride(Number(e.target.value))}
-              className="flex-1 accent-sun-600"
-            />
-            <div className="flex items-center gap-1">
-              <input
-                type="number"
-                min="0"
-                step="50"
-                value={Math.round(capSimulada)}
-                onChange={e => setCapacidadeOverride(Math.max(0, Number(e.target.value) || 0))}
-                className={`font-mono text-sm w-20 text-right px-1.5 py-1 border bg-cream outline-none focus:border-sun-500 ${capMudou ? "border-sun-500 text-sun-600" : "border-stone-200 text-ink"}`}
-              />
-              <span className="text-xs text-stone-600">kWh</span>
-            </div>
-          </div>
-          <div className="flex items-center justify-between text-[10px] font-mono text-stone-600">
-            <span>real: {capReal.toFixed(0)} kWh/mês</span>
-            {capMudou && (
-              <button onClick={() => setCapacidadeOverride(null)} className="text-sun-600 hover:underline uppercase tracking-wider">
-                resetar capacidade
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Adicionar cliente de outra UG */}
-        <div className="border border-stone-200 bg-white shadow-auri-sm p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <Plus size={14} className="text-forest-600" />
-            <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Mover cliente para esta UG</h3>
-          </div>
-          <div className="flex items-center gap-2">
-            <select
-              value={ucParaAdd}
-              onChange={e => setUcParaAdd(e.target.value)}
-              className="flex-1 bg-cream border border-stone-200 px-2 py-1.5 text-xs text-stone-800 outline-none focus:border-forest-600 min-w-0"
-            >
-              <option value="">Selecione um cliente…</option>
-              {disponiveisParaAdd.map(c => (
-                <option key={c.uc} value={c.uc}>
-                  {c.nome} · {c.ug || "órfã"} · CMC {(c.cmc || 0).toFixed(0)}
-                </option>
-              ))}
-            </select>
-            <button
-              onClick={adicionarCliente}
-              disabled={!ucParaAdd}
-              className="px-3 py-1.5 text-xs uppercase tracking-[0.18em] border border-forest-600 text-forest-700 hover:bg-forest-50 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            >
-              Adicionar
-            </button>
-          </div>
-          {clientesRemovidos.length > 0 && (
-            <div className="mt-3 pt-3 border-t border-stone-200">
-              <div className="text-[10px] uppercase tracking-[0.15em] text-stone-600 mb-1.5">Removidos desta UG</div>
-              <div className="flex flex-wrap gap-1.5">
-                {clientesRemovidos.map(c => (
-                  <button
-                    key={c.uc}
-                    onClick={() => restaurarCliente(c.uc)}
-                    className="text-[10px] px-2 py-0.5 border border-stone-200 text-stone-600 hover:border-forest-600 hover:text-forest-700 transition-colors"
-                    title="Clique para restaurar"
-                  >
-                    {c.nome} ↩
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Sliders / inputs */}
-      <div className="border border-stone-200 bg-white shadow-auri-sm p-5">
-        <div className="flex items-baseline justify-between mb-4 flex-wrap gap-2">
-          <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Controles por cliente</h3>
-          <p className="text-[10px] text-stone-600">Slider/input ajusta %. Verde = vindo de outra UG. Borda verde = editado vs. otimizado.</p>
-        </div>
-        {clientesPraEditar.length === 0 ? (
-          <p className="text-center py-6 text-stone-600 text-sm">Nenhum cliente editável nesta UG.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {clientesPraEditar.map(l => (
-              <ControleClienteSlider
-                key={l.cliente.uc}
-                cliente={l.cliente}
-                valorAtual={l.cliente.rateio_pct || 0}
-                valor={overrides[l.cliente.uc] ?? l.rateioProposto}
-                otimizado={otimizadoPorUc[l.cliente.uc]}
-                ehAdicionado={ucsAdicionados.has(l.cliente.uc)}
-                entrandoOtimizador={l.estado === "entrando" && !ucsAdicionados.has(l.cliente.uc)}
-                origem={l.origem}
-                saindo={l.estado === "saindo"}
-                destino={l.destino}
-                onChange={(v) => mudarPct(l.cliente.uc, v)}
-                onRemover={() => removerCliente(l.cliente.uc, ucsAdicionados.has(l.cliente.uc))}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── App principal ────────────────────────────────────────────
-// ─── TelaPanorama ─────────────────────────────────────────────
-const SITUACOES_PANORAMA = [
-  { nivel: "critico",   label: "Crítico",   cor: "#a8482a" },
-  { nivel: "baixo",     label: "Baixo",     cor: "#c98a1f" },
-  { nivel: "ideal",     label: "Ideal",     cor: "#2f7a52" },
-  { nivel: "alto",      label: "Alto",      cor: "#2f6690" },
-  { nivel: "excessivo", label: "Excessivo", cor: "#6d4a8c" },
-];
-
-function TelaPanorama({ ugsValidadas, onVerUG }) {
-  const [situacaoFiltro, setSituacaoFiltro] = useState(null);
-
-  const dadosBarras = ugsValidadas.map(ug => {
-    const consumidores = ug.clientes.filter(c => !c.ehUCGeradora);
-    const row = { ug: ug.nome };
-    SITUACOES_PANORAMA.forEach(s => {
-      row[s.nivel] = consumidores.filter(c => c.status.nivel === s.nivel).length;
-    });
-    return row;
-  });
-
-  const totais = Object.fromEntries(
-    SITUACOES_PANORAMA.map(s => [
-      s.nivel,
-      dadosBarras.reduce((sum, r) => sum + (r[s.nivel] || 0), 0),
-    ])
-  );
-
-  const totalGeral = SITUACOES_PANORAMA.reduce((sum, s) => sum + totais[s.nivel], 0);
-
-  return (
-    <div>
-      <div className="mb-5">
-        <h2 className="text-2xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>
-          Panorama de Clientes
-        </h2>
-        <p className="text-xs text-stone-600 mt-1">
-          {totalGeral} UCs consumidoras · clique numa situação para destacar
-        </p>
-      </div>
-
-      {/* Cards de situação */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 mb-8">
-        {SITUACOES_PANORAMA.map(s => {
-          const ativo = situacaoFiltro === s.nivel;
-          return (
-            <button
-              key={s.nivel}
-              onClick={() => setSituacaoFiltro(ativo ? null : s.nivel)}
-              className={`border border-stone-200 p-4 text-left transition-all bg-white shadow-auri-sm hover:shadow-auri-md rounded-md ${
-                ativo ? "ring-2 ring-offset-1" : ""
-              }`}
-              style={{
-                ...(ativo ? { "--tw-ring-color": s.cor } : {}),
-              }}
-            >
-              <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">
-                {s.label}
-              </div>
-              <div className="text-3xl font-extrabold tracking-tight" style={{ color: s.cor }}>
-                {totais[s.nivel]}
-              </div>
-              <div className="text-xs text-stone-600 mt-1">clientes</div>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Gráfico de barras empilhadas por UG */}
-      <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md p-5 mb-6">
-        <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-4 font-mono">
-          Distribuição por UG
-        </div>
-        <ResponsiveContainer width="100%" height={300}>
-          <BarChart data={dadosBarras} margin={{ top: 0, right: 0, left: -20, bottom: 0 }}>
-            <XAxis dataKey="ug" tick={{ fontSize: 11, fill: "#78716c" }} />
-            <YAxis tick={{ fontSize: 11, fill: "#78716c" }} allowDecimals={false} />
-            <Tooltip
-              contentStyle={{ fontSize: 12, border: "1px solid #d6d3d1", borderRadius: 0 }}
-              cursor={{ fill: "#f5f0e8" }}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: 11, paddingTop: 12 }}
-              formatter={(value) =>
-                SITUACOES_PANORAMA.find(s => s.nivel === value)?.label || value
-              }
-            />
-            {SITUACOES_PANORAMA.map(s => (
-              <Bar
-                key={s.nivel}
-                dataKey={s.nivel}
-                name={s.nivel}
-                stackId="a"
-                fill={s.cor}
-                fillOpacity={situacaoFiltro && situacaoFiltro !== s.nivel ? 0.15 : 1}
-                style={{ cursor: "pointer" }}
-                onClick={(data) => onVerUG(data.ug)}
-              />
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
-        <p className="text-[10px] text-stone-600 mt-2">
-          Clique em uma barra para abrir o detalhe da UG
-        </p>
-      </div>
-
-      {/* Tabela resumo */}
-      <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-stone-200 bg-stone-50">
-              <th className="text-left px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-normal font-mono">
-                UG
-              </th>
-              {SITUACOES_PANORAMA.map(s => (
-                <th
-                  key={s.nivel}
-                  className="text-center px-3 py-2 text-[10px] uppercase tracking-[0.18em] font-normal font-mono"
-                  style={{
-                    color: s.cor,
-                    opacity: situacaoFiltro && situacaoFiltro !== s.nivel ? 0.3 : 1,
-                  }}
-                >
-                  {s.label}
-                </th>
-              ))}
-              <th className="text-center px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-normal font-mono">
-                Total
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {dadosBarras.map((row, i) => {
-              const total = SITUACOES_PANORAMA.reduce((sum, s) => sum + row[s.nivel], 0);
-              return (
-                <tr
-                  key={row.ug}
-                  className={`border-b border-stone-100 hover:bg-stone-50 cursor-pointer ${
-                    i % 2 === 0 ? "" : "bg-bone/40"
-                  }`}
-                  onClick={() => onVerUG(row.ug)}
-                >
-                  <td className="px-4 py-2 text-stone-700 font-mono text-xs">{row.ug}</td>
-                  {SITUACOES_PANORAMA.map(s => (
-                    <td
-                      key={s.nivel}
-                      className="text-center px-3 py-2 font-mono text-xs"
-                      style={{
-                        color: row[s.nivel] > 0 ? s.cor : "#c7bfb5",
-                        opacity: situacaoFiltro && situacaoFiltro !== s.nivel ? 0.25 : 1,
-                        fontWeight: situacaoFiltro === s.nivel && row[s.nivel] > 0 ? 600 : 400,
-                      }}
-                    >
-                      {row[s.nivel]}
-                    </td>
-                  ))}
-                  <td className="text-center px-3 py-2 font-mono text-xs text-stone-600">
-                    {total}
-                  </td>
-                </tr>
-              );
-            })}
-            <tr className="border-t-2 border-stone-200 bg-stone-50">
-              <td className="px-4 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-mono">
-                Total
-              </td>
-              {SITUACOES_PANORAMA.map(s => (
-                <td
-                  key={s.nivel}
-                  className="text-center px-3 py-2 font-mono text-xs font-semibold"
-                  style={{
-                    color: s.cor,
-                    opacity: situacaoFiltro && situacaoFiltro !== s.nivel ? 0.25 : 1,
-                  }}
-                >
-                  {totais[s.nivel]}
-                </td>
-              ))}
-              <td className="text-center px-3 py-2 font-mono text-xs font-semibold text-stone-700">
-                {totalGeral}
-              </td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
-
 // ─── TelaLTV ─────────────────────────────────────────────────
 function parseMesAno(s) {
   // "MM/YYYY" → Date para ordenação
@@ -2454,6 +1876,7 @@ function TelaLTV({ clientes, onClickCliente }) {
   const [periodoFim,    setPeriodoFim   ] = useState(() => mesOptions.at(-1) ?? "");
   const [filtroUG, setFiltroUG] = useState("todas");
   const [ord, setOrd] = useState({ col: "ltv", dir: "desc" });
+  const [soVermelho, setSoVermelho] = useState(false);
   const handleSort = (col) => setOrd(prev =>
     prev.col === col
       ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
@@ -2522,13 +1945,14 @@ function TelaLTV({ clientes, onClickCliente }) {
     });
 
     const dadosGrafico = Object.values(porMes).sort((a, b) => comparaMes(a.mes, b.mes));
-    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", ratio: "ratio", rspkwh: "rsPorKwh" };
+    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", margem: "margemPct", ratio: "ratio", rspkwh: "rsPorKwh" };
     const dadosTabela  = Object.values(porCliente)
       .map(r => ({
         ...r,
         ltv:      r.receitaTotal - r.despesaTotal,
         ltvPago:  r.receitaPago  - r.despesaPago,
         ratio:    r.despesaTotal > 0 ? r.receitaTotal / r.despesaTotal : null,
+        margemPct: r.receitaTotal > 0 ? ((r.receitaTotal - r.despesaTotal) / r.receitaTotal) * 100 : null,
         rsPorKwh: r.consumoKwh > 0 ? (r.receitaTotal - r.despesaTotal) / r.consumoKwh : null,
       }))
       .sort((a, b) => {
@@ -2544,9 +1968,11 @@ function TelaLTV({ clientes, onClickCliente }) {
       acc.despesa   += r.despesaTotal;
       acc.ltv       += r.ltv;
       acc.consumoKwh += r.consumoKwh || 0;
+      if (r.ltv < 0) { acc.nVermelho += 1; acc.sangrando += r.ltv; }
       return acc;
-    }, { receita: 0, despesa: 0, ltv: 0, consumoKwh: 0 });
+    }, { receita: 0, despesa: 0, ltv: 0, consumoKwh: 0, nVermelho: 0, sangrando: 0 });
     totais.ratio    = totais.despesa   > 0 ? totais.receita    / totais.despesa    : null;
+    totais.margemPct = totais.receita  > 0 ? (totais.ltv / totais.receita) * 100 : null;
     totais.rsPorKwh = totais.consumoKwh > 0 ? totais.ltv / totais.consumoKwh : null;
 
     return { dadosGrafico, dadosTabela, totais };
@@ -2566,6 +1992,9 @@ function TelaLTV({ clientes, onClickCliente }) {
     );
   }
 
+  // Linhas exibidas na tabela — KPIs/totais seguem sobre o conjunto completo do período.
+  const linhasTabela = soVermelho ? dadosTabela.filter(r => r.ltv < 0) : dadosTabela;
+
   return (
     <div>
       <div className="mb-6">
@@ -2574,24 +2003,42 @@ function TelaLTV({ clientes, onClickCliente }) {
       </div>
 
       {/* Painel global da empresa */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         {[
-          ["Receita total", totais.receita, "#2f7a52"],
-          ["Despesa total", totais.despesa, "#a8482a"],
-          ["LTV total",     totais.ltv,     totais.ltv >= 0 ? "#2f7a52" : "#a8482a"],
-          ["R$/kWh global", totais.rsPorKwh != null ? totais.rsPorKwh : null, totais.rsPorKwh != null ? (totais.rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89"],
-        ].map(([label, valor, cor]) => (
+          { label: "Receita total", valor: fmtBRL(totais.receita), cor: "#2f7a52" },
+          { label: "Despesa total", valor: fmtBRL(totais.despesa), cor: "#a8482a" },
+          {
+            label: "Margem (LTV)", valor: fmtBRL(totais.ltv),
+            cor: totais.ltv >= 0 ? "#2f7a52" : "#a8482a",
+            sub: totais.margemPct != null
+              ? `${totais.margemPct >= 0 ? "+" : ""}${totais.margemPct.toFixed(1).replace(".", ",")}% da receita`
+              : null,
+          },
+          {
+            label: "R$/kWh global",
+            valor: totais.rsPorKwh != null
+              ? `R$ ${totais.rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
+              : "—",
+            cor: totais.rsPorKwh != null ? (totais.rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89",
+            sub: totais.consumoKwh > 0
+              ? `${totais.consumoKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh entregues`
+              : null,
+          },
+          {
+            label: "No vermelho", valor: String(totais.nVermelho),
+            cor: totais.nVermelho > 0 ? "#a8482a" : "#2f7a52",
+            sub: `de ${dadosTabela.length} clientes`,
+          },
+          {
+            label: "R$ sangrando", valor: fmtBRL(totais.sangrando),
+            cor: totais.sangrando < 0 ? "#a8482a" : "#2f7a52",
+            sub: "soma das margens < 0",
+          },
+        ].map(({ label, valor, cor, sub }) => (
           <div key={label} className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4">
             <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
-            <div className="text-2xl font-extrabold tracking-tight font-mono" style={{ color: cor }}>
-              {valor == null ? "—"
-                : label === "R$/kWh global"
-                  ? `${valor.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
-                  : fmtBRL(valor)}
-            </div>
-            {label === "R$/kWh global" && totais.consumoKwh > 0 && (
-              <div className="text-[10px] text-stone-500 font-mono mt-1">{totais.consumoKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh entregues</div>
-            )}
+            <div className="text-2xl font-extrabold tracking-tight font-mono" style={{ color: cor }}>{valor}</div>
+            {sub && <div className="text-[10px] text-stone-500 font-mono mt-1">{sub}</div>}
           </div>
         ))}
       </div>
@@ -2617,7 +2064,16 @@ function TelaLTV({ clientes, onClickCliente }) {
             {ugNomes.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
-        <div className="ml-auto pb-2 text-xs text-stone-600 font-mono">{dadosTabela.length} clientes com dados</div>
+        <button
+          onClick={() => setSoVermelho(v => !v)}
+          className={`pb-0.5 px-3 py-2 text-xs border transition-colors ${soVermelho ? "border-[#a8482a] bg-terra-100/60 text-[#a8482a]" : "border-stone-200 text-stone-600 hover:border-[#a8482a]/50"}`}
+        >
+          {soVermelho ? "● Só no vermelho" : "○ Só no vermelho"}
+          {totais.nVermelho > 0 && <span className="ml-1.5 font-mono">{totais.nVermelho}</span>}
+        </button>
+        <div className="ml-auto pb-2 text-xs text-stone-600 font-mono">
+          {soVermelho ? `${linhasTabela.length} no vermelho` : `${dadosTabela.length} clientes com dados`}
+        </div>
       </div>
 
       {/* Gráfico */}
@@ -2659,6 +2115,7 @@ function TelaLTV({ clientes, onClickCliente }) {
                   ["despesa", "Despesa",      "right"],
                   [null,      "Pago / Pend.", "right"],
                   ["ltv",     "LTV",          "right"],
+                  ["margem",  "Margem %",     "right"],
                   ["ratio",   "Rec/Desp",     "right"],
                   ["rspkwh",  "R$/kWh",       "right"],
                 ].map(([sortCol, label, align], i) => {
@@ -2682,8 +2139,9 @@ function TelaLTV({ clientes, onClickCliente }) {
               </tr>
             </thead>
             <tbody>
-              {dadosTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, ratio, rsPorKwh, consumoKwh }, i) => {
+              {linhasTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, margemPct, ratio, rsPorKwh, consumoKwh }, i) => {
                 const ratioCor  = ratio    == null ? "#a89e89" : ratio >= 2 ? "#2f7a52" : ratio >= 1 ? "#c98a1f" : "#a8482a";
+                const margemCor = margemPct == null ? "#a89e89" : margemPct >= 50 ? "#2f7a52" : margemPct >= 0 ? "#c98a1f" : "#a8482a";
                 const kwCor     = rsPorKwh == null ? "#a89e89" : rsPorKwh >= 0 ? "#2f6690" : "#a8482a";
                 return (
                   <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
@@ -2704,6 +2162,9 @@ function TelaLTV({ clientes, onClickCliente }) {
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ltv >= 0 ? "#2f7a52" : "#a8482a" }}>
                       {fmtBRL(ltv)}
+                    </td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: margemCor }}>
+                      {margemPct != null ? `${margemPct.toFixed(0)}%` : "—"}
                     </td>
                     <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ratioCor }}>
                       {ratio != null ? ratio.toFixed(2).replace(".", ",") + "×" : "—"}
@@ -2726,6 +2187,9 @@ function TelaLTV({ clientes, onClickCliente }) {
                   <td className="px-3 py-2.5 text-right font-mono font-bold text-[#a8482a]">{fmtBRL(totais.despesa)}</td>
                   <td />
                   <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ltv >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totais.ltv)}</td>
+                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.margemPct == null ? "#a89e89" : totais.margemPct >= 50 ? "#2f7a52" : totais.margemPct >= 0 ? "#c98a1f" : "#a8482a" }}>
+                    {totais.margemPct != null ? `${totais.margemPct.toFixed(0)}%` : "—"}
+                  </td>
                   <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ratio != null ? (totais.ratio >= 2 ? "#2f7a52" : totais.ratio >= 1 ? "#c98a1f" : "#a8482a") : "#a89e89" }}>
                     {totais.ratio != null ? totais.ratio.toFixed(2).replace(".", ",") + "×" : "—"}
                   </td>
@@ -2827,11 +2291,7 @@ export default function App() {
             <NavBtn ativo={aba === "comparativo"} onClick={() => setAba("comparativo")}>
               Comparativo
             </NavBtn>
-            <NavBtn ativo={aba === "simulador"} onClick={() => setAba("simulador")}>
-              Simulador
-            </NavBtn>
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
-            <NavBtn ativo={aba === "panorama"} onClick={() => setAba("panorama")}>Panorama</NavBtn>
             <NavBtn ativo={aba === "ltv"} onClick={() => setAba("ltv")}>LTV</NavBtn>
           </div>
         </div>
@@ -2893,14 +2353,6 @@ export default function App() {
           />
         )}
 
-        {aba === "simulador" && (
-          <TelaSimulador
-            ugsValidadas={ugsValidadas}
-            planoGlobal={planoGlobal}
-            clientes={clientes}
-          />
-        )}
-
         {aba === "clientes" && (
           <div>
             <div className="mb-5">
@@ -2909,10 +2361,6 @@ export default function App() {
             </div>
             <TabelaClientes clientes={clientes} onClickCliente={setClienteSel} />
           </div>
-        )}
-
-        {aba === "panorama" && (
-          <TelaPanorama ugsValidadas={ugsValidadas} onVerUG={handleVerUG} />
         )}
 
         {aba === "ltv" && (
