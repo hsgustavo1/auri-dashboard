@@ -2150,14 +2150,14 @@ function TelaLTV({ clientes, onClickCliente }) {
                       <div className="text-stone-800 truncate max-w-[180px]">{cliente.nome}</div>
                       <div className="text-[10px] text-stone-600 font-mono">{cliente.uc}</div>
                     </td>
-                    <td className="px-2 py-2.5 text-xs text-stone-600 whitespace-nowrap">{cliente.ug || "—"}</td>
+                    <td className="px-2 py-2.5 text-stone-600 whitespace-nowrap">{cliente.ug || "—"}</td>
                     <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[#2f7a52] whitespace-nowrap">{fmtBRL(receitaTotal)}</td>
-                    <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[10px] whitespace-nowrap">
+                    <td className="px-1.5 py-2.5 text-right font-mono text-[10px] whitespace-nowrap">
                       <span className="text-stone-600">{fmtBRL(receitaPago)}</span>
                       {receitaPendente > 0 && <span className="text-stone-400"> / {fmtBRL(receitaPendente)}</span>}
                     </td>
                     <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[#a8482a] whitespace-nowrap">{fmtBRL(despesaTotal)}</td>
-                    <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[10px] whitespace-nowrap">
+                    <td className="px-1.5 py-2.5 text-right font-mono text-[10px] whitespace-nowrap">
                       <span className="text-stone-600">{fmtBRL(despesaPago)}</span>
                       {despesaPendente > 0 && <span className="text-stone-400"> / {fmtBRL(despesaPendente)}</span>}
                     </td>
