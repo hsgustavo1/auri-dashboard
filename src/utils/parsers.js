@@ -132,11 +132,12 @@ export function parseLegado(text) {
     const mes = `${String(mesNum).padStart(2, "0")}/${ano}`;
     const receita = parseBR(r["Valor a cobrar (R$)"]) ?? 0;
     const despesa = parseBR(r["Valor real da fatura (R$)"]) ?? 0;
+    const kwh = parseBR(r["Consumo líquido após disponibilidade"]) ?? 0;
     if (receita > 0) {
-      transacoes.push({ uc, tipo: "Receita", mes, valor: receita, status: "Recebido", fonte: "legado" });
+      transacoes.push({ uc, tipo: "Receita", mes, valor: receita, status: "Recebido", fonte: "legado", kwh });
     }
     if (despesa > 0) {
-      transacoes.push({ uc, tipo: "Despesa", mes, valor: despesa, status: "Pago", fonte: "legado" });
+      transacoes.push({ uc, tipo: "Despesa", mes, valor: despesa, status: "Pago", fonte: "legado", kwh });
     }
   }
   return transacoes;

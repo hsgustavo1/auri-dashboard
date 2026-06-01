@@ -31,10 +31,10 @@ describe("parseBR", () => {
 import { parseLegado } from "./parsers.js";
 
 describe("parseLegado", () => {
-  const CSV = `Unidade Consumidora,Cliente,Mês de referência da fatura,Ano de referência da fatura,E,F,G,H,I,J,K,Valor a cobrar (R$),Valor real da fatura (R$)
-10020459279,João,3,2023,,,,,,,,"1.250,50","980,00"
-10020459279,João,4,2023,,,,,,,,"1.100,00","900,00"
-99999999,Inexistente,1,2023,,,,,,,,0,0`;
+  const CSV = `Unidade Consumidora,Cliente,Mês de referência da fatura,Ano de referência da fatura,E,F,Consumo líquido após disponibilidade,H,I,J,K,Valor a cobrar (R$),Valor real da fatura (R$)
+10020459279,João,3,2023,,,"350,00",,,,,"1.250,50","980,00"
+10020459279,João,4,2023,,,"280,00",,,,,"1.100,00","900,00"
+99999999,Inexistente,1,2023,,,"100,00",,,,,,`;
 
   it("converte linhas em transações Receita e Despesa", () => {
     const result = parseLegado(CSV);
@@ -68,5 +68,13 @@ describe("parseLegado", () => {
     const result = parseLegado(CSV);
     const zeros = result.filter(t => t.uc === "99999999");
     expect(zeros).toHaveLength(0);
+  });
+
+  it("inclui kwh da coluna G em cada transação", () => {
+    const result = parseLegado(CSV);
+    const rec = result.find(t => t.mes === "03/2023" && t.tipo === "Receita");
+    const desp = result.find(t => t.mes === "03/2023" && t.tipo === "Despesa");
+    expect(rec.kwh).toBeCloseTo(350);
+    expect(desp.kwh).toBeCloseTo(350);
   });
 });

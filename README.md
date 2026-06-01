@@ -4,7 +4,7 @@ Dashboard operacional para gestão de rateio de créditos de energia solar distr
 
 ## Visão Geral
 
-O sistema consome cinco abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
+O sistema consome seis abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%. O ajuste interno é **ponderado por urgência** (clientes perto de crítico/excessivo convergem mais rápido) e o fechamento de soma é **ciente de colchão** (ver Otimizador, abaixo).
@@ -111,6 +111,7 @@ Planilha Google Sheets publicada como CSV (configurada em `src/config.js`):
 | `scAnalitico` | Rateio atual (col E), média de consumo (col F), histórico de saldo |
 | `infoGerais` | Capacidade instalada e ocupação atual de cada UG |
 | `rdEquatorial` | Receitas e despesas por UC × mês: cobranças ao cliente (Receita) e faturas Equatorial pagas pela Auri (Despesa), com status Pago/Recebido/pendente |
+| `legado` | Histórico anterior à adoção do `rdEquatorial`. Cada linha = UC × mês, com `Valor a cobrar (R$)` (col L = Receita), `Valor real da fatura (R$)` (col M = Despesa) e `Consumo líquido após disponibilidade` (col G = kWh entregue). `parseLegado` converte para o mesmo formato `{ uc, tipo, mes, valor, status, kwh }`. `mergeTransacoes` prioriza `rdEquatorial` em conflito de `(uc, mes, tipo)`. |
 
 Geradoras identificadas por código de UC em `UC_GERADORA_NOVA` / `UC_GERADORA_ANTIGA` (`src/config.js`).
 
@@ -121,18 +122,19 @@ Geradoras identificadas por código de UC em `UC_GERADORA_NOVA` / `UC_GERADORA_A
 ## Arquitetura
 
 ```
-Google Sheets (5 abas CSV publicadas)
+Google Sheets (6 abas CSV publicadas)
       │
       ▼
-src/hooks/useSheetData.js   ← fetch paralelo das 5 abas + parse + build + otimizar
+src/hooks/useSheetData.js   ← fetch paralelo das 6 abas + parse + merge + build + otimizar
       ├── src/utils/parsers.js       ← parseSCAnalitico, parseFatAuri, parseInfoGerais,
-      │                                parseClientes, parseRDEquatorial
-      ├── src/utils/business.js      ← buildClientes, buildFinanceiro, validarRateios,
-      │                                otimizadorGlobal, carregamentoUG/demandaUG/
-      │                                capacidadeEfetivaUG, construirCenarioProposto,
+      │                                parseClientes, parseRDEquatorial, parseLegado
+      ├── src/utils/business.js      ← buildClientes, buildFinanceiro, mergeTransacoes,
+      │                                validarRateios, otimizadorGlobal,
+      │                                carregamentoUG/demandaUG/capacidadeEfetivaUG,
+      │                                construirCenarioProposto,
       │                                construirCenarioComOverrides, simularCenario,
       │                                analisarCenario, projetarHorizonte
-      └── src/config.js              ← URLs (incl. rdEquatorial), mapeamentos UG/UC,
+      └── src/config.js              ← URLs (incl. rdEquatorial + legado), mapeamentos UG/UC,
                                        DADOS_FIXOS_AURI, CLASSE_POR_UG, OPT_PARAMS
       ▼
 src/App.jsx                 ← UI (React + Recharts + Tailwind/Auri)
@@ -237,9 +239,9 @@ auri-dashboard/
 │   ├── utils/
 │   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador (passo por urgência +
 │   │   │                        # squeeze cushion-aware), cenários, projeções,
-│   │   │                        # buildFinanceiro (LTV — join R_D_Equatorial + Fatura Auri geradoras)
+│   │   │                        # buildFinanceiro (LTV), mergeTransacoes (merge legado+rdEquatorial)
 │   │   ├── business.test.js     # testes unitários de business.js (Vitest)
-│   │   ├── parsers.js           # parsers CSV (incl. parseRDEquatorial)
+│   │   ├── parsers.js           # parsers CSV (incl. parseRDEquatorial, parseLegado)
 │   │   ├── parsers.test.js      # testes unitários de parsers.js (Vitest)
 │   │   ├── formularioRateio.js
 │   │   ├── pdfRateioGenerator.js
@@ -258,7 +260,7 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
-npm test           # testes unitários (Vitest) — 71 testes
+npm test           # testes unitários (Vitest) — 82 testes
 npm run lint       # análise estática (ESLint)
 npm run test:watch # modo watch para desenvolvimento
 ```
@@ -360,6 +362,8 @@ cliente.financeiro = {
 ```
 
 **Join de UC:** `rdEquatorial` usava código antigo até mar/2025, novo a partir de abr/2025. `buildFinanceiro` tenta `uc_antiga` primeiro, depois `uc` (novo). Um cliente pode ter transações nos dois formatos — todas são consolidadas.
+
+**Dados legados:** a aba `legado` contém histórico anterior ao `rdEquatorial`. `parseLegado` converte cada linha em transações `Receita` e `Despesa` (status fixo `Recebido`/`Pago`). `mergeTransacoes(rdEquatorial, legado)` descarta registros legados onde `(uc, mes, tipo)` já existe no `rdEquatorial` — garantindo prioridade para o dado mais recente. O campo `kwh` (col G = `Consumo líquido após disponibilidade`) é armazenado em cada transação legada e usado na tela LTV para calcular `consumoKwh` em meses não cobertos pelo `consumoArr` (S_C_Analitico), evitando que o R$/kWh global seja inflado por denominador incompleto.
 
 **Receita implícita de geradoras:** após processar as transações do `rdEquatorial`, para cada UC Geradora verifica meses sem Receita explícita e injeta a `Fatura Auri (R$)` do `fatAuri` como `status: "Implícita"` — contabilizada em `receitaPago` (dividendo = recebido).
 
