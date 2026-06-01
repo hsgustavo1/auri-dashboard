@@ -2121,8 +2121,9 @@ function TelaLTV({ clientes, onClickCliente }) {
                 ].map(([sortCol, label, align], i) => {
                   const ativo = sortCol && ord.col === sortCol;
                   const seta = ativo ? (ord.dir === "desc" ? " ↓" : " ↑") : (sortCol ? " ↕" : "");
+                  const hasWidePadding = label === "Cliente" || label === "UG";
                   return (
-                    <th key={i} className={`${i <= 1 ? "px-2" : "px-1.5"} py-2 text-[10px] uppercase tracking-[0.18em] font-normal whitespace-nowrap ${align === "right" ? "text-right" : "text-left"}`}>
+                    <th key={i} className={`${hasWidePadding ? "px-2" : "px-1.5"} py-2 text-[10px] uppercase tracking-[0.18em] font-normal whitespace-nowrap ${align === "right" ? "text-right" : "text-left"}`}>
                       {sortCol ? (
                         <button
                           onClick={() => handleSort(sortCol)}
