@@ -1936,12 +1936,23 @@ function TelaLTV({ clientes, onClickCliente }) {
       });
 
       // kWh consumido pelo cliente no período (consumoArr alinhado com c.meses)
+      const mesesComConsumoArr = new Set();
       pc.consumoKwh = (c.meses || []).reduce((sum, mes, i) => {
         if (!dentroDoPeriodo(mes)) return sum;
         if (filtroUG !== "todas" && c.ug !== filtroUG) return sum;
         const v = c.consumoArr?.[i];
+        if (v != null) mesesComConsumoArr.add(mes);
         return sum + (v != null ? v : 0);
       }, 0);
+      // Para meses legados não cobertos pelo consumoArr, usa o kWh da transação
+      ts.forEach(t => {
+        if (t.fonte !== "legado" || t.tipo !== "Receita") return;
+        if (mesesComConsumoArr.has(t.mes)) return;
+        if (t.kwh > 0) {
+          pc.consumoKwh += t.kwh;
+          mesesComConsumoArr.add(t.mes);
+        }
+      });
     });
 
     const dadosGrafico = Object.values(porMes).sort((a, b) => comparaMes(a.mes, b.mes));
@@ -2182,19 +2193,19 @@ function TelaLTV({ clientes, onClickCliente }) {
             {dadosTabela.length > 1 && (
               <tfoot>
                 <tr className="border-t-2 border-stone-200 bg-bone">
-                  <td colSpan={2} className="px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] text-stone-600">Total do período</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-bold text-[#2f7a52]">{fmtBRL(totais.receita)}</td>
+                  <td colSpan={2} className="px-2 py-2.5 text-[10px] uppercase tracking-[0.18em] text-stone-600">Total do período</td>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold text-[#2f7a52]">{fmtBRL(totais.receita)}</td>
                   <td />
-                  <td className="px-3 py-2.5 text-right font-mono font-bold text-[#a8482a]">{fmtBRL(totais.despesa)}</td>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold text-[#a8482a]">{fmtBRL(totais.despesa)}</td>
                   <td />
-                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ltv >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totais.ltv)}</td>
-                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.margemPct == null ? "#a89e89" : totais.margemPct >= 50 ? "#2f7a52" : totais.margemPct >= 0 ? "#c98a1f" : "#a8482a" }}>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold" style={{ color: totais.ltv >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totais.ltv)}</td>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold" style={{ color: totais.margemPct == null ? "#a89e89" : totais.margemPct >= 50 ? "#2f7a52" : totais.margemPct >= 0 ? "#c98a1f" : "#a8482a" }}>
                     {totais.margemPct != null ? `${totais.margemPct.toFixed(0)}%` : "—"}
                   </td>
-                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.ratio != null ? (totais.ratio >= 2 ? "#2f7a52" : totais.ratio >= 1 ? "#c98a1f" : "#a8482a") : "#a89e89" }}>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold" style={{ color: totais.ratio != null ? (totais.ratio >= 2 ? "#2f7a52" : totais.ratio >= 1 ? "#c98a1f" : "#a8482a") : "#a89e89" }}>
                     {totais.ratio != null ? totais.ratio.toFixed(2).replace(".", ",") + "×" : "—"}
                   </td>
-                  <td className="px-3 py-2.5 text-right font-mono font-bold" style={{ color: totais.rsPorKwh != null ? (totais.rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89" }}>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold" style={{ color: totais.rsPorKwh != null ? (totais.rsPorKwh >= 0 ? "#2f6690" : "#a8482a") : "#a89e89" }}>
                     {totais.rsPorKwh != null
                       ? `R$ ${totais.rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
                       : "—"}
