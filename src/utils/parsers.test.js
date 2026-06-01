@@ -27,3 +27,46 @@ describe("parseBR", () => {
   it("null para string não-numérica", () =>
     expect(parseBR("abc")).toBeNull());
 });
+
+import { parseLegado } from "./parsers.js";
+
+describe("parseLegado", () => {
+  const CSV = `Unidade Consumidora,Cliente,Mês de referência da fatura,Ano de referência da fatura,E,F,G,H,I,J,K,Valor a cobrar (R$),Valor real da fatura (R$)
+10020459279,João,3,2023,,,,,,,,"1.250,50","980,00"
+10020459279,João,4,2023,,,,,,,,"1.100,00","900,00"
+99999999,Inexistente,1,2023,,,,,,,,0,0`;
+
+  it("converte linhas em transações Receita e Despesa", () => {
+    const result = parseLegado(CSV);
+    expect(result).toHaveLength(4); // 2 meses × 2 tipos (zeros excluídos)
+  });
+
+  it("formata mês corretamente como MM/YYYY", () => {
+    const result = parseLegado(CSV);
+    const meses = result.map(t => t.mes);
+    expect(meses).toContain("03/2023");
+    expect(meses).toContain("04/2023");
+  });
+
+  it("receita tem tipo Receita e status Recebido", () => {
+    const result = parseLegado(CSV);
+    const rec = result.find(t => t.mes === "03/2023" && t.tipo === "Receita");
+    expect(rec.valor).toBeCloseTo(1250.5);
+    expect(rec.status).toBe("Recebido");
+    expect(rec.fonte).toBe("legado");
+  });
+
+  it("despesa tem tipo Despesa e status Pago", () => {
+    const result = parseLegado(CSV);
+    const desp = result.find(t => t.mes === "03/2023" && t.tipo === "Despesa");
+    expect(desp.valor).toBeCloseTo(980.0);
+    expect(desp.status).toBe("Pago");
+    expect(desp.fonte).toBe("legado");
+  });
+
+  it("ignora linhas com valor zero", () => {
+    const result = parseLegado(CSV);
+    const zeros = result.filter(t => t.uc === "99999999");
+    expect(zeros).toHaveLength(0);
+  });
+});

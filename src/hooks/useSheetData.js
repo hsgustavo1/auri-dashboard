@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { SHEET_URLS } from "../config";
-import { parseSCAnalitico, parseFatAuri, parseInfoGerais, parseClientes, parseRDEquatorial } from "../utils/parsers";
-import { buildClientes, validarRateios, otimizadorGlobal, buildFinanceiro } from "../utils/business";
+import { parseSCAnalitico, parseFatAuri, parseInfoGerais, parseClientes, parseRDEquatorial, parseLegado } from "../utils/parsers";
+import { buildClientes, validarRateios, otimizadorGlobal, buildFinanceiro, mergeTransacoes } from "../utils/business";
 
 async function fetchCSV(url) {
   const res = await fetch(url);
@@ -15,20 +15,23 @@ export function useSheetData() {
   const load = useCallback(async () => {
     setState(s => ({ ...s, loading: true, error: null }));
     try {
-      const [fatText, clientesText, scText, infoText, rdText] = await Promise.all([
+      const [fatText, clientesText, scText, infoText, rdText, legadoText] = await Promise.all([
         fetchCSV(SHEET_URLS.fatAuri),
         fetchCSV(SHEET_URLS.clientes),
         fetchCSV(SHEET_URLS.scAnalitico),
         fetchCSV(SHEET_URLS.infoGerais),
         fetchCSV(SHEET_URLS.rdEquatorial),
+        fetchCSV(SHEET_URLS.legado),
       ]);
 
-      const scData      = parseSCAnalitico(scText);
-      const fatData     = parseFatAuri(fatText);
-      const base        = parseClientes(clientesText);
-      const ugsInfo     = parseInfoGerais(infoText);
-      const transacoes  = parseRDEquatorial(rdText);
-      const clientes    = buildClientes(scData, fatData, base);
+      const scData           = parseSCAnalitico(scText);
+      const fatData          = parseFatAuri(fatText);
+      const base             = parseClientes(clientesText);
+      const ugsInfo          = parseInfoGerais(infoText);
+      const rdTransacoes     = parseRDEquatorial(rdText);
+      const legadoTransacoes = parseLegado(legadoText);
+      const transacoes       = mergeTransacoes(rdTransacoes, legadoTransacoes);
+      const clientes         = buildClientes(scData, fatData, base);
       buildFinanceiro(clientes, transacoes, fatData);
 
       const ugsValidadas = validarRateios(clientes).map(u => ({

@@ -18,6 +18,7 @@ import {
   squeezeColchaoAware,
   diagnosticarUG,
   OPT_PARAMS,
+  mergeTransacoes,
 } from "./business.js";
 
 // ─── Helpers de fixture ────────────────────────────────────────────────────
@@ -518,5 +519,46 @@ describe("OPT_PARAMS", () => {
 
   it("teto de carregamento órfã > faixa alvo max", () => {
     expect(OPT_PARAMS.TETO_CARREGAMENTO_ORFA).toBeGreaterThan(OPT_PARAMS.FAIXA_ALVO_MAX);
+  });
+});
+
+describe("mergeTransacoes", () => {
+  const rd = [
+    { uc: "UC1", tipo: "Receita", mes: "01/2024", valor: 500, status: "Recebido" },
+    { uc: "UC1", tipo: "Despesa", mes: "01/2024", valor: 400, status: "Pago" },
+  ];
+  const legado = [
+    { uc: "UC1", tipo: "Receita", mes: "01/2024", valor: 999, status: "Recebido", fonte: "legado" },
+    { uc: "UC1", tipo: "Receita", mes: "06/2022", valor: 300, status: "Recebido", fonte: "legado" },
+    { uc: "UC1", tipo: "Despesa", mes: "06/2022", valor: 200, status: "Pago", fonte: "legado" },
+  ];
+
+  it("mantém todos os registros de rdEquatorial", () => {
+    const result = mergeTransacoes(rd, legado);
+    const rdRecords = result.filter(t => t.fonte !== "legado");
+    expect(rdRecords).toHaveLength(2);
+    expect(rdRecords[0].valor).toBe(500);
+  });
+
+  it("adiciona registros legados sem conflito", () => {
+    const result = mergeTransacoes(rd, legado);
+    const legadoRecords = result.filter(t => t.fonte === "legado");
+    expect(legadoRecords).toHaveLength(2);
+  });
+
+  it("descarta legado quando rdEquatorial já cobre o mesmo (uc, mes, tipo)", () => {
+    const result = mergeTransacoes(rd, legado);
+    const conflito = result.find(t => t.fonte === "legado" && t.mes === "01/2024" && t.tipo === "Receita");
+    expect(conflito).toBeUndefined();
+  });
+
+  it("funciona com legado vazio", () => {
+    const result = mergeTransacoes(rd, []);
+    expect(result).toHaveLength(2);
+  });
+
+  it("funciona com rdEquatorial vazio", () => {
+    const result = mergeTransacoes([], legado);
+    expect(result).toHaveLength(3);
   });
 });

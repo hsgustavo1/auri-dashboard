@@ -2146,31 +2146,31 @@ function TelaLTV({ clientes, onClickCliente }) {
                 const kwCor     = rsPorKwh == null ? "#a89e89" : rsPorKwh >= 0 ? "#2f6690" : "#a8482a";
                 return (
                   <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
-                    <td className="px-3 py-2.5">
+                    <td className="px-2 py-2.5">
                       <div className="text-stone-800 truncate max-w-[180px]">{cliente.nome}</div>
                       <div className="text-[10px] text-stone-600 font-mono">{cliente.uc}</div>
                     </td>
-                    <td className="px-3 py-2.5 text-xs text-stone-600 whitespace-nowrap">{cliente.ug || "—"}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-[#2f7a52] whitespace-nowrap">{fmtBRL(receitaTotal)}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-[10px] whitespace-nowrap">
+                    <td className="px-2 py-2.5 text-xs text-stone-600 whitespace-nowrap">{cliente.ug || "—"}</td>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[#2f7a52] whitespace-nowrap">{fmtBRL(receitaTotal)}</td>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[10px] whitespace-nowrap">
                       <span className="text-stone-600">{fmtBRL(receitaPago)}</span>
                       {receitaPendente > 0 && <span className="text-stone-400"> / {fmtBRL(receitaPendente)}</span>}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-[#a8482a] whitespace-nowrap">{fmtBRL(despesaTotal)}</td>
-                    <td className="px-3 py-2.5 text-right font-mono text-[10px] whitespace-nowrap">
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[#a8482a] whitespace-nowrap">{fmtBRL(despesaTotal)}</td>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs text-[10px] whitespace-nowrap">
                       <span className="text-stone-600">{fmtBRL(despesaPago)}</span>
                       {despesaPendente > 0 && <span className="text-stone-400"> / {fmtBRL(despesaPendente)}</span>}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ltv >= 0 ? "#2f7a52" : "#a8482a" }}>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs font-bold whitespace-nowrap" style={{ color: ltv >= 0 ? "#2f7a52" : "#a8482a" }}>
                       {fmtBRL(ltv)}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: margemCor }}>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs font-bold whitespace-nowrap" style={{ color: margemCor }}>
                       {margemPct != null ? `${margemPct.toFixed(0)}%` : "—"}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: ratioCor }}>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs font-bold whitespace-nowrap" style={{ color: ratioCor }}>
                       {ratio != null ? ratio.toFixed(2).replace(".", ",") + "×" : "—"}
                     </td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold whitespace-nowrap" style={{ color: kwCor }}>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs font-bold whitespace-nowrap" style={{ color: kwCor }}>
                       {rsPorKwh != null
                         ? `R$ ${rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
                         : "—"}

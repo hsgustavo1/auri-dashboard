@@ -1303,6 +1303,16 @@ export function analisarCenario(cenario, n = 6) {
   return { distAtual, distProposta, pulmaoAtual, pulmaoProposto, riscos, horizonte: n };
 }
 
+// ─── mergeTransacoes ──────────────────────────────────────────
+// Combina transações de rdEquatorial e de dados legados.
+// R_D_Equatorial tem prioridade: qualquer par (uc, mes, tipo) presente
+// nela descarta o equivalente legado.
+export function mergeTransacoes(rdEquatorial, legado) {
+  const chaves = new Set(rdEquatorial.map(t => `${t.uc}|${t.mes}|${t.tipo}`));
+  const legadoFiltrado = legado.filter(t => !chaves.has(`${t.uc}|${t.mes}|${t.tipo}`));
+  return [...rdEquatorial, ...legadoFiltrado];
+}
+
 // ─── buildFinanceiro ─────────────────────────────────────────
 // Enriquece cada cliente com dados financeiros de receitas e despesas.
 // Recebe o array de transações de parseRDEquatorial e muta clientes in-place.

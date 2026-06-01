@@ -121,6 +121,27 @@ export function parseRDEquatorial(text) {
     .filter(Boolean);
 }
 
+export function parseLegado(text) {
+  const rows = parseCSV(text);
+  const transacoes = [];
+  for (const r of rows) {
+    const uc = (r["Unidade Consumidora"] || "").trim();
+    const mesNum = parseInt(r["Mês de referência da fatura"], 10);
+    const ano = parseInt(r["Ano de referência da fatura"], 10);
+    if (!uc || !mesNum || !ano) continue;
+    const mes = `${String(mesNum).padStart(2, "0")}/${ano}`;
+    const receita = parseBR(r["Valor a cobrar (R$)"]) ?? 0;
+    const despesa = parseBR(r["Valor real da fatura (R$)"]) ?? 0;
+    if (receita > 0) {
+      transacoes.push({ uc, tipo: "Receita", mes, valor: receita, status: "Recebido", fonte: "legado" });
+    }
+    if (despesa > 0) {
+      transacoes.push({ uc, tipo: "Despesa", mes, valor: despesa, status: "Pago", fonte: "legado" });
+    }
+  }
+  return transacoes;
+}
+
 export function parseClientes(text) {
   const rows = parseCSV(text);
   return rows
