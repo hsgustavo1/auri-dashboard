@@ -2279,15 +2279,15 @@ export default function App() {
   };
 
   const stats = useMemo(() => {
-    // Clientes inativos (col N = "INATIVO") já foram excluídos em parseClientes.
-    // Contamos todos os clientes restantes — com ou sem UG atribuída.
-    const ativos = clientes;
+    // Exclui explicitamente inativos — clientes legados entram no pipeline mas
+    // não devem compor os indicadores operacionais da Visão Geral.
+    const ativos = clientes.filter(c => !c.inativo);
     return {
       total:      ativos.length,
       criticos:   ativos.filter(c => c.status.nivel === "critico").length,
       excessivos: ativos.filter(c => c.status.nivel === "excessivo").length,
-      semUG:      clientes.filter(c => !c.ug).length,
-      travados:   clientes.filter(c => c.travamentoSuspeito).length,
+      semUG:      ativos.filter(c => !c.ug).length,
+      travados:   ativos.filter(c => c.travamentoSuspeito).length,
     };
   }, [clientes]);
 
@@ -2416,7 +2416,7 @@ export default function App() {
           <div>
             <div className="mb-5">
               <h2 className="text-2xl text-stone-800" style={{ fontFamily: "Fraunces, serif" }}>Saúde dos Clientes</h2>
-              <p className="text-xs text-stone-600 mt-1">{clientes.length} UCs carregadas.</p>
+              <p className="text-xs text-stone-600 mt-1">{clientes.filter(c => !c.inativo).length} UCs carregadas.</p>
             </div>
             <TabelaClientes clientes={clientes} onClickCliente={setClienteSel} />
           </div>
