@@ -152,7 +152,9 @@ export function buildClientes(scData, fatData, clientesBase) {
 
     // Status e pulmão usam o CMC unificado (regime ativo).
     let status;
-    if (ehUCGeradora && tipoGd === "GD2") {
+    if (base.inativo) {
+      status = { nivel: "inativo", label: "Inativo", cor: "#9ca3af", razao: 0 };
+    } else if (ehUCGeradora && tipoGd === "GD2") {
       // GD2: saldo preso — não há como agir sobre ele, exibe apenas como "UC Geradora".
       status = { nivel: "geradora", label: "UC Geradora", cor: "#a89e89", razao: cmc > 0 ? saldo / cmc : 0 };
     } else {
@@ -166,6 +168,7 @@ export function buildClientes(scData, fatData, clientesBase) {
       uc_antiga: ucAntiga,
       nome: base.nome,
       ug,
+      inativo: base.inativo || false,
       desconto_pct: base.desconto_pct,
       emite_cobranca: base.emite_cobranca,
       cpf_cnpj: base.cpf_cnpj,
@@ -174,14 +177,16 @@ export function buildClientes(scData, fatData, clientesBase) {
       bairro: base.bairro,
       cidade: base.cidade,
       classe: base.classe,
-      rateio_pct: sc.rateio_pct !== undefined ? sc.rateio_pct : 0,
+      rateio_pct: base.inativo ? 0 : (sc.rateio_pct !== undefined ? sc.rateio_pct : 0),
       cmc,
       cmcRecente: cmcRec,
       emRecuperacao,
       pulmaoMeses,
       media_consumo: mediaConsumo,
-      saldo, saldoArr, consumoArr, meses, status, travado, ehUCGeradora,
-      travamentoSuspeito: travado && !ehUCGeradora && saldo > OPT_PARAMS.SALDO_TRAVADO_MIN,
+      saldo, saldoArr, consumoArr, meses, status,
+      travado: base.inativo ? false : travado,
+      ehUCGeradora,
+      travamentoSuspeito: !base.inativo && travado && !ehUCGeradora && saldo > OPT_PARAMS.SALDO_TRAVADO_MIN,
       tipoGd,
       colchaoIdeal: cmc * 2,
     };

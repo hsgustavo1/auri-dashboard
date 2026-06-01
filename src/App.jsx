@@ -447,6 +447,9 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
               {cliente.uc} · {cliente.ug || "Sem UG"} {cliente.tipoGd && <span className="text-sun-500/70 ml-1">{cliente.tipoGd}</span>}
             </p>
             <h2 className="text-2xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>{cliente.nome}</h2>
+            {cliente.inativo && (
+              <span className="inline-block mt-1.5 text-[10px] px-2 py-0.5 bg-stone-100 text-stone-500 border border-stone-300 uppercase tracking-[0.15em]">Cliente inativo</span>
+            )}
           </div>
           <button onClick={onClose} className="text-stone-600 hover:text-stone-800 text-2xl leading-none">×</button>
         </div>
@@ -562,16 +565,20 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
 }
 
 // ─── TabelaClientes ──────────────────────────────────────────
-const ORDEM_STATUS = { critico: 0, baixo: 1, excessivo: 2, alto: 3, ideal: 4, geradora: 5, sem_dados: 6 };
+const ORDEM_STATUS = { critico: 0, baixo: 1, excessivo: 2, alto: 3, ideal: 4, geradora: 5, sem_dados: 6, inativo: 99 };
 
 function TabelaClientes({ clientes, onClickCliente }) {
   const [filtroUG, setFiltroUG] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [busca, setBusca] = useState("");
   const [ord, setOrd] = useState("status");
+  const [mostrarInativos, setMostrarInativos] = useState(false);
+
+  const nInativos = useMemo(() => clientes.filter(c => c.inativo).length, [clientes]);
 
   const lista = useMemo(() => {
     let r = clientes.filter(c => {
+      if (!mostrarInativos && c.inativo) return false;
       if (filtroUG === "null") { if (c.ug) return false; }
       else if (filtroUG !== "todas") { if (c.ug !== filtroUG) return false; }
       if (filtroStatus !== "todos" && c.status.nivel !== filtroStatus) return false;
@@ -584,7 +591,7 @@ function TabelaClientes({ clientes, onClickCliente }) {
     else if (ord === "razao") r.sort((a, b) => b.status.razao - a.status.razao);
     else r.sort((a, b) => a.nome.localeCompare(b.nome));
     return r;
-  }, [clientes, filtroUG, filtroStatus, busca, ord]);
+  }, [clientes, filtroUG, filtroStatus, busca, ord, mostrarInativos]);
 
   return (
     <div>
@@ -613,7 +620,15 @@ function TabelaClientes({ clientes, onClickCliente }) {
             {[["status","Prioridade"],["saldo_d","Maior saldo"],["saldo_a","Menor saldo"],["razao","Maior razão"],["nome","Nome"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
-        <div className="ml-auto text-xs text-stone-600 font-mono pb-2">{lista.length} / {clientes.length}</div>
+        {nInativos > 0 && (
+          <button
+            onClick={() => setMostrarInativos(v => !v)}
+            className={`pb-0.5 px-3 py-2 text-xs border transition-colors ${mostrarInativos ? "border-stone-400 bg-stone-100 text-stone-700" : "border-stone-200 text-stone-600 hover:border-stone-400/50"}`}
+          >
+            {mostrarInativos ? "● Ocultar inativos" : `○ Mostrar inativos (${nInativos})`}
+          </button>
+        )}
+        <div className="ml-auto text-xs text-stone-600 font-mono pb-2">{lista.length} / {clientes.filter(c => !c.inativo).length}</div>
       </div>
       <div className="border border-stone-200 overflow-x-auto">
         <table className="w-full text-sm">
@@ -626,9 +641,12 @@ function TabelaClientes({ clientes, onClickCliente }) {
           </thead>
           <tbody>
             {lista.map((c, i) => (
-              <tr key={c.uc} onClick={() => onClickCliente(c)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
+              <tr key={c.uc} onClick={() => onClickCliente(c)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"} ${c.inativo ? "opacity-55" : ""}`}>
                 <td className="px-3 py-2.5">
-                  <div className="text-stone-800 truncate max-w-[180px]">{c.nome}</div>
+                  <div className="text-stone-800 truncate max-w-[180px]">
+                    {c.nome}
+                    {c.inativo && <span className="ml-2 text-[9px] px-1 py-px bg-stone-100 text-stone-500 border border-stone-300 uppercase align-middle">inativo</span>}
+                  </div>
                   <div className="text-[10px] text-stone-600 font-mono">{c.uc}</div>
                 </td>
                 <td className="px-3 py-2.5 whitespace-nowrap">
@@ -636,10 +654,10 @@ function TabelaClientes({ clientes, onClickCliente }) {
                     ? <span className="text-stone-600 text-xs">{c.ug} <span className={`text-[9px] ${c.tipoGd === "GD1" ? "text-sun-500/70" : "text-stone-600"}`}>{c.tipoGd}</span></span>
                     : <span className="text-stone-600 text-xs italic">—</span>}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-stone-600">{c.rateio_pct}%</td>
-                <td className="px-3 py-2.5 text-right font-mono text-stone-600">{(c.saldo||0).toFixed(0)}</td>
-                <td className="px-3 py-2.5 text-right font-mono text-stone-400">{(c.cmc||0).toFixed(0)}</td>
-                <td className="px-3 py-2.5 text-right font-mono" style={{ color: c.status.cor }}>{c.status.razao > 0 ? c.status.razao.toFixed(1) : "—"}</td>
+                <td className="px-3 py-2.5 text-right font-mono text-stone-600">{c.inativo ? "—" : `${c.rateio_pct}%`}</td>
+                <td className="px-3 py-2.5 text-right font-mono text-stone-600">{c.inativo ? "—" : (c.saldo||0).toFixed(0)}</td>
+                <td className="px-3 py-2.5 text-right font-mono text-stone-400">{c.inativo ? "—" : (c.cmc||0).toFixed(0)}</td>
+                <td className="px-3 py-2.5 text-right font-mono" style={{ color: c.status.cor }}>{c.inativo ? "—" : (c.status.razao > 0 ? c.status.razao.toFixed(1) : "—")}</td>
                 <td className="px-3 py-2.5">
                   <div className="flex items-center gap-2">
                     <div className="w-1.5 h-4 shrink-0" style={{ backgroundColor: c.status.cor }} />
@@ -648,10 +666,10 @@ function TabelaClientes({ clientes, onClickCliente }) {
                 </td>
                 <td className="px-3 py-2.5">
                   <div className="flex flex-wrap gap-1">
-                    {c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">ger.</span>}
-                    {c.travamentoSuspeito && <span className="text-[9px] px-1 py-px bg-terra-100/60 text-terra-600 border border-terra-500/40 uppercase">trv?</span>}
-                    {!c.ug && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">s/ug</span>}
-                    {c.rateio_pct === 0 && c.ug && !c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-[#e9eef3] text-[#2f6690] border border-[#2f6690]/40 uppercase">0%</span>}
+                    {!c.inativo && c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">ger.</span>}
+                    {!c.inativo && c.travamentoSuspeito && <span className="text-[9px] px-1 py-px bg-terra-100/60 text-terra-600 border border-terra-500/40 uppercase">trv?</span>}
+                    {!c.inativo && !c.ug && <span className="text-[9px] px-1 py-px bg-sun-100 text-sun-600 border border-sun-400 uppercase">s/ug</span>}
+                    {!c.inativo && c.rateio_pct === 0 && c.ug && !c.ehUCGeradora && <span className="text-[9px] px-1 py-px bg-[#e9eef3] text-[#2f6690] border border-[#2f6690]/40 uppercase">0%</span>}
                   </div>
                 </td>
               </tr>
@@ -1877,6 +1895,7 @@ function TelaLTV({ clientes, onClickCliente }) {
   const [filtroUG, setFiltroUG] = useState("todas");
   const [ord, setOrd] = useState({ col: "ltv", dir: "desc" });
   const [soVermelho, setSoVermelho] = useState(false);
+  const [mostrarInativos, setMostrarInativos] = useState(false);
   const handleSort = (col) => setOrd(prev =>
     prev.col === col
       ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
@@ -1888,7 +1907,7 @@ function TelaLTV({ clientes, onClickCliente }) {
   const fimPadrao    = mesOptions.at(-1) ?? "";
 
   // Filtra e agrega
-  const { dadosGrafico, dadosTabela, totais } = useMemo(() => {
+  const { dadosGrafico, dadosTabela, dadosTabelaAtivos, totais } = useMemo(() => {
     const dentroDoPeriodo = (mes) => {
       if (!periodoInicio && !periodoFim) return true;
       const d = parseMesAno(mes);
@@ -1911,6 +1930,23 @@ function TelaLTV({ clientes, onClickCliente }) {
       });
       if (!ts.length) return;
 
+      // Gráfico: sempre inclui todos os clientes — histórico completo da empresa
+      ts.forEach(t => {
+        if (!porMes[t.mes]) {
+          porMes[t.mes] = { mes: t.mes, receitaPago: 0, receitaPendente: 0, despesaPago: 0, despesaPendente: 0 };
+        }
+        const pm = porMes[t.mes];
+        const pago = t.tipo === "Receita" ? (t.status === "Recebido" || t.status === "Implícita") : t.status === "Pago";
+        if (t.tipo === "Receita") {
+          pago ? (pm.receitaPago += t.valor) : (pm.receitaPendente += t.valor);
+        } else {
+          pago ? (pm.despesaPago += t.valor) : (pm.despesaPendente += t.valor);
+        }
+      });
+
+      // Tabela: respeita o toggle de inativos
+      if (!mostrarInativos && c.inativo) return;
+
       if (!porCliente[c.uc]) {
         porCliente[c.uc] = {
           cliente: c,
@@ -1921,16 +1957,12 @@ function TelaLTV({ clientes, onClickCliente }) {
       const pc = porCliente[c.uc];
 
       ts.forEach(t => {
-        if (!porMes[t.mes]) {
-          porMes[t.mes] = { mes: t.mes, receitaPago: 0, receitaPendente: 0, despesaPago: 0, despesaPendente: 0 };
-        }
-        const pm = porMes[t.mes];
         const pago = t.tipo === "Receita" ? (t.status === "Recebido" || t.status === "Implícita") : t.status === "Pago";
         if (t.tipo === "Receita") {
-          pago ? (pm.receitaPago += t.valor, pc.receitaPago += t.valor) : (pm.receitaPendente += t.valor, pc.receitaPendente += t.valor);
+          pago ? (pc.receitaPago += t.valor) : (pc.receitaPendente += t.valor);
           pc.receitaTotal += t.valor;
         } else {
-          pago ? (pm.despesaPago += t.valor, pc.despesaPago += t.valor) : (pm.despesaPendente += t.valor, pc.despesaPendente += t.valor);
+          pago ? (pc.despesaPago += t.valor) : (pc.despesaPendente += t.valor);
           pc.despesaTotal += t.valor;
         }
       });
@@ -1974,7 +2006,9 @@ function TelaLTV({ clientes, onClickCliente }) {
         return mul * (va - vb);
       });
 
-    const totais = dadosTabela.reduce((acc, r) => {
+    // KPIs sempre sobre ativos, independente do toggle de inativos
+    const dadosTabelaAtivos = dadosTabela.filter(r => !r.cliente.inativo);
+    const totais = dadosTabelaAtivos.reduce((acc, r) => {
       acc.receita   += r.receitaTotal;
       acc.despesa   += r.despesaTotal;
       acc.ltv       += r.ltv;
@@ -1986,8 +2020,8 @@ function TelaLTV({ clientes, onClickCliente }) {
     totais.margemPct = totais.receita  > 0 ? (totais.ltv / totais.receita) * 100 : null;
     totais.rsPorKwh = totais.consumoKwh > 0 ? totais.ltv / totais.consumoKwh : null;
 
-    return { dadosGrafico, dadosTabela, totais };
-  }, [clientes, periodoInicio, periodoFim, filtroUG, ord]);
+    return { dadosGrafico, dadosTabela, dadosTabelaAtivos, totais };
+  }, [clientes, periodoInicio, periodoFim, filtroUG, ord, mostrarInativos]);
 
   const ugNomes = useMemo(() => {
     const set = new Set();
@@ -2003,8 +2037,10 @@ function TelaLTV({ clientes, onClickCliente }) {
     );
   }
 
-  // Linhas exibidas na tabela — KPIs/totais seguem sobre o conjunto completo do período.
+  // Linhas exibidas na tabela — KPIs/totais seguem sobre ativos do período.
   const linhasTabela = soVermelho ? dadosTabela.filter(r => r.ltv < 0) : dadosTabela;
+  // Conta inativos com dados financeiros (independente do toggle, para exibir o botão)
+  const nInativos = clientes.filter(c => c.inativo && c.financeiro?.temDados).length;
 
   return (
     <div>
@@ -2038,7 +2074,7 @@ function TelaLTV({ clientes, onClickCliente }) {
           {
             label: "No vermelho", valor: String(totais.nVermelho),
             cor: totais.nVermelho > 0 ? "#a8482a" : "#2f7a52",
-            sub: `de ${dadosTabela.length} clientes`,
+            sub: `de ${dadosTabelaAtivos.length} ativos`,
           },
           {
             label: "R$ sangrando", valor: fmtBRL(totais.sangrando),
@@ -2082,8 +2118,16 @@ function TelaLTV({ clientes, onClickCliente }) {
           {soVermelho ? "● Só no vermelho" : "○ Só no vermelho"}
           {totais.nVermelho > 0 && <span className="ml-1.5 font-mono">{totais.nVermelho}</span>}
         </button>
+        {nInativos > 0 && (
+          <button
+            onClick={() => setMostrarInativos(v => !v)}
+            className={`pb-0.5 px-3 py-2 text-xs border transition-colors ${mostrarInativos ? "border-stone-400 bg-stone-100 text-stone-700" : "border-stone-200 text-stone-600 hover:border-stone-400/50"}`}
+          >
+            {mostrarInativos ? "● Ocultar inativos" : `○ Mostrar inativos (${nInativos})`}
+          </button>
+        )}
         <div className="ml-auto pb-2 text-xs text-stone-600 font-mono">
-          {soVermelho ? `${linhasTabela.length} no vermelho` : `${dadosTabela.length} clientes com dados`}
+          {soVermelho ? `${linhasTabela.length} no vermelho` : `${dadosTabelaAtivos.length} ativos com dados`}
         </div>
       </div>
 
@@ -2156,9 +2200,12 @@ function TelaLTV({ clientes, onClickCliente }) {
                 const margemCor = margemPct == null ? "#a89e89" : margemPct >= 50 ? "#2f7a52" : margemPct >= 0 ? "#c98a1f" : "#a8482a";
                 const kwCor     = rsPorKwh == null ? "#a89e89" : rsPorKwh >= 0 ? "#2f6690" : "#a8482a";
                 return (
-                  <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
+                  <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"} ${cliente.inativo ? "opacity-60" : ""}`}>
                     <td className="px-2 py-2.5">
-                      <div className="text-stone-800 truncate max-w-[180px]">{cliente.nome}</div>
+                      <div className="text-stone-800 truncate max-w-[180px]">
+                        {cliente.nome}
+                        {cliente.inativo && <span className="ml-2 text-[9px] px-1 py-px bg-stone-100 text-stone-500 border border-stone-300 uppercase align-middle">inativo</span>}
+                      </div>
                       <div className="text-[10px] text-stone-600 font-mono">{cliente.uc}</div>
                     </td>
                     <td className="px-2 py-2.5 text-stone-600 whitespace-nowrap">{cliente.ug || "—"}</td>

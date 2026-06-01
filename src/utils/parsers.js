@@ -167,5 +167,5 @@ export function parseClientes(text) {
         inativo,
       };
     })
-    .filter(c => c.uc && c.nome && !c.inativo);
+    .filter(c => c.uc && c.nome);
 }

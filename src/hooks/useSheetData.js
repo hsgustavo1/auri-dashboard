@@ -34,14 +34,15 @@ export function useSheetData() {
       const clientes         = buildClientes(scData, fatData, base);
       buildFinanceiro(clientes, transacoes, fatData);
 
-      const ugsValidadas = validarRateios(clientes).map(u => ({
+      const clientesAtivos = clientes.filter(c => !c.inativo);
+      const ugsValidadas = validarRateios(clientesAtivos).map(u => ({
         ...u,
         capacidade_kwh: ugsInfo[u.nome]?.capacidade_kwh || 0,
         ocupacao_atual:  ugsInfo[u.nome]?.ocupacao_atual  || 0,
       }));
 
       const planoGlobal = ugsValidadas.length
-        ? otimizadorGlobal(ugsValidadas, clientes)
+        ? otimizadorGlobal(ugsValidadas, clientesAtivos)
         : { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} };
 
       setState({ data: { clientes, ugsValidadas, planoGlobal }, loading: false, error: null, lastUpdated: new Date() });
