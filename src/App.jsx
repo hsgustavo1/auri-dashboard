@@ -53,9 +53,11 @@ function NavBtn({ ativo, onClick, children }) {
   );
 }
 
-function StatBox({ label, valor, cor = "#152a22" }) {
+function StatBox({ label, valor, cor = "#152a22", onClick }) {
+  const base = "border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4";
+  const extra = onClick ? "cursor-pointer hover:border-stone-400/60 hover:shadow-auri-md transition-all" : "";
   return (
-    <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4">
+    <div className={`${base} ${extra}`} onClick={onClick}>
       <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
       <div className="text-4xl font-extrabold tracking-tight" style={{ color: cor }}>{valor}</div>
     </div>
@@ -568,7 +570,7 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
 // ─── TabelaClientes ──────────────────────────────────────────
 const ORDEM_STATUS = { critico: 0, baixo: 1, excessivo: 2, alto: 3, ideal: 4, geradora: 5, sem_dados: 6, inativo: 99 };
 
-function TabelaClientes({ clientes, onClickCliente }) {
+function TabelaClientes({ clientes, onClickCliente, filtroInicial, onFiltroConsumido }) {
   const [filtroUG, setFiltroUG] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [busca, setBusca] = useState("");
@@ -579,6 +581,17 @@ function TabelaClientes({ clientes, onClickCliente }) {
       : { col, dir: col === "status" ? "asc" : "desc" }
   );
   const [filtroAtividade, setFiltroAtividade] = useState("ativos");
+  const [filtroEspecial, setFiltroEspecial] = useState(null);
+
+  useEffect(() => {
+    if (!filtroInicial) return;
+    setFiltroStatus(filtroInicial.status ?? "todos");
+    setFiltroUG(filtroInicial.ug ?? "todas");
+    setFiltroAtividade(filtroInicial.atividade ?? "ativos");
+    setFiltroEspecial(filtroInicial.especial ?? null);
+    setBusca("");
+    onFiltroConsumido?.();
+  }, [filtroInicial]);
 
   const nInativos = useMemo(() => clientes.filter(c => c.inativo).length, [clientes]);
 
@@ -589,6 +602,7 @@ function TabelaClientes({ clientes, onClickCliente }) {
       if (filtroUG === "null") { if (c.ug) return false; }
       else if (filtroUG !== "todas") { if (c.ug !== filtroUG) return false; }
       if (filtroStatus !== "todos" && c.status.nivel !== filtroStatus) return false;
+      if (filtroEspecial === "travamento" && !c.travamentoSuspeito) return false;
       if (busca && !c.nome.toLowerCase().includes(busca.toLowerCase()) && !c.uc.includes(busca)) return false;
       return true;
     });
@@ -604,7 +618,7 @@ function TabelaClientes({ clientes, onClickCliente }) {
       }
     });
     return [...r.filter(c => !c.inativo), ...r.filter(c => c.inativo)];
-  }, [clientes, filtroUG, filtroStatus, busca, ord, filtroAtividade]);
+  }, [clientes, filtroUG, filtroStatus, busca, ord, filtroAtividade, filtroEspecial]);
 
   return (
     <div>
@@ -2489,6 +2503,12 @@ export default function App() {
   const [aba, setAba] = useState("overview");
   const [ugSel, setUgSel] = useState(null);
   const [clienteSel, setClienteSel] = useState(null);
+  const [filtroClienteInicial, setFiltroClienteInicial] = useState(null);
+
+  const irParaClientes = (filtro) => {
+    setFiltroClienteInicial(filtro);
+    setAba("clientes");
+  };
   const [formularioRateio, setFormularioRateio] = useState(null); // { ug, cenario }
 
   const { clientes, ugsValidadas, planoGlobal } = data || {
@@ -2575,11 +2595,11 @@ export default function App() {
 
       <main className="max-w-[1400px] mx-auto px-6 py-8">
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-          <StatBox label="Clientes ativos"    valor={stats.total} />
-          <StatBox label="Saldo crítico"       valor={stats.criticos}   cor="#a8482a" />
-          <StatBox label="Saldo excessivo"     valor={stats.excessivos} cor="#6d4a8c" />
-          <StatBox label="Travamento anormal"  valor={stats.travados}   cor="#c98a1f" />
-          <StatBox label="Sem UG alocada"      valor={stats.semUG}      cor="#2f6690" />
+          <StatBox label="Clientes ativos"   valor={stats.total}      onClick={() => irParaClientes({ atividade: "ativos" })} />
+          <StatBox label="Saldo crítico"      valor={stats.criticos}   cor="#a8482a" onClick={() => irParaClientes({ status: "critico" })} />
+          <StatBox label="Saldo excessivo"    valor={stats.excessivos} cor="#6d4a8c" onClick={() => irParaClientes({ status: "excessivo" })} />
+          <StatBox label="Travamento anormal" valor={stats.travados}   cor="#c98a1f" onClick={() => irParaClientes({ especial: "travamento" })} />
+          <StatBox label="Sem UG alocada"     valor={stats.semUG}      cor="#2f6690" onClick={() => irParaClientes({ ug: "null" })} />
         </div>
 
         {aba === "overview" && <BannerValidacao ugs={ugsValidadas} />}
@@ -2635,7 +2655,7 @@ export default function App() {
               <h2 className="text-2xl text-stone-800" style={{ fontFamily: "Fraunces, serif" }}>Saúde dos Clientes</h2>
               <p className="text-xs text-stone-600 mt-1">{clientes.filter(c => !c.inativo).length} UCs carregadas.</p>
             </div>
-            <TabelaClientes clientes={clientes} onClickCliente={setClienteSel} />
+            <TabelaClientes clientes={clientes} onClickCliente={setClienteSel} filtroInicial={filtroClienteInicial} onFiltroConsumido={() => setFiltroClienteInicial(null)} />
           </div>
         )}
 
