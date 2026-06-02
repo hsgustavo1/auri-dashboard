@@ -12,9 +12,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "docxtemplater": "^3.68.7",
     "lucide-react": "^1.16.0",
     "papaparse": "^5.5.3",
     "pdf-lib": "^1.17.1",
+    "pizzip": "^3.2.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "recharts": "^3.8.1"
