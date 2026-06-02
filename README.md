@@ -10,7 +10,7 @@ O sistema consome seis abas de uma planilha Google Sheets (publicadas como CSV) 
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%. O ajuste interno é **ponderado por urgência** (clientes perto de crítico/excessivo convergem mais rápido) e o fechamento de soma é **ciente de colchão** (ver Otimizador, abaixo).
 - **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Cada cliente exibe **barras gêmeas** (`recebe` vs `consome`) em ambos os lados. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **edição manual persistente** dos %´s: os valores editados são **operativos** (entram no cenário, nas métricas e no Formulário Equatorial) e **persistem em `localStorage`** (sobrevivem a refresh/troca de UG/aba). Um **badge por linha** + **banner global** sinalizam quando o valor usado difere da proposta do otimizador. Botão **Gerar Formulário Equatorial** (PDF).
 - **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado). Cabeçalhos clicáveis com toggle ↑↓ para todas as colunas. Filtro **Situação** (Ativos / Inativos / Todos) — inativos aparecem sempre ao final da lista, independente da ordenação ativa.
-- **LTV — cockpit financeiro** — painel de decisão por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri) e margem (LTV = receita − despesa). Faixa de **KPIs** (Receita, Despesa, Margem R$/%, Nº de clientes no vermelho, R$ total sangrando, R$/kWh global), tabela com coluna **Margem %**, ratio Rec/Desp. Filtros: **Situação** (Ativos/Inativos/Todos), **Margem** (Todos/Margem positiva/Margem negativa) e **UG**. Atalhos de período pré-definidos (padrão: últimos 12 meses): Mês atual/anterior, Trimestre, Semestre, Últ. 12 meses, Ano atual/anterior, Desde o início. Gráfico de barras empilhadas por mês clicável: ao clicar num mês abre painel **"Composição · MM/AAAA"** com a relação de clientes e seus resultados naquele mês, totalizador incluso. Headers de tabela clicáveis. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente`.
+- **LTV — cockpit financeiro** — painel de decisão por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri) e margem (LTV = receita − despesa). Faixa de **KPIs** (Receita, Despesa, Margem R$/%, Nº de clientes no vermelho, R$ total sangrando, R$/kWh global), tabela com coluna **Margem %**, ratio Rec/Desp. Filtros: **Situação** (Ativos/Inativos/Todos), **Margem** (Todos/Margem positiva/Margem negativa), **Em aberto** (Todos/Receita pendente/Despesa pendente/Qualquer pendência) e **UG**. Atalhos de período pré-definidos (padrão: últimos 12 meses): Mês atual/anterior, Trimestre, Semestre, Últ. 12 meses, Ano atual/anterior, Desde o início. Gráfico de barras empilhadas por mês clicável: ao clicar num mês abre painel **"Composição · MM/AAAA"** com a relação de clientes e seus resultados naquele mês, totalizador incluso — headers clicáveis com toggle ↓/↑ (Cliente, UG, Receita, Despesa, LTV). Headers da tabela principal também clicáveis. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente`.
 
 Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
@@ -348,6 +348,7 @@ Responde, em segundos, a pergunta de fundador: **estou ganhando ou perdendo, e o
 - **Faixa de KPIs** (respeita o filtro de período/UG): Receita, Despesa, **Margem (LTV)** em R$ com sub-linha de **% da receita**, **R$/kWh global**, **Nº de clientes no vermelho** e **R$ total sangrando** (soma das margens < 0).
 - **Coluna Margem %** na tabela (`ltv/receitaTotal`), verde ≥ 50% · âmbar 0–50% · vermelho < 0.
 - **Filtro "só no vermelho"** — mostra apenas clientes com LTV < 0, ordenados pelo tamanho do prejuízo (cada linha clicável → `DetalheCliente`).
+- **Filtro "Em aberto"** — restringe a tabela a clientes com pendências financeiras no período: Receita pendente (não recebida), Despesa pendente (não paga) ou Qualquer pendência (ambos os casos).
 
 `buildFinanceiro(clientes, transacoes, fatData)` em `business.js` enriquece cada cliente com:
 
@@ -369,7 +370,7 @@ cliente.financeiro = {
 
 **Ratio Rec/Desp:** exibido na coluna final da tabela LTV. Cores: verde ≥ 2×, âmbar 1–2×, vermelho < 1×.
 
-**Ordenação:** todos os headers clicáveis com toggle ↓/↑ no segundo clique. Inativos sempre ao final da tabela quando visíveis (Situação = "Inativos" ou "Todos").
+**Ordenação:** todos os headers da tabela principal clicáveis com toggle ↓/↑ no segundo clique. Inativos sempre ao final da tabela quando visíveis (Situação = "Inativos" ou "Todos"). O painel **"Composição · MM/AAAA"** (drill-down por mês) também tem headers clicáveis — Cliente, UG, Receita, Despesa, LTV — com o mesmo comportamento toggle; padrão LTV ↓.
 
 ---
 

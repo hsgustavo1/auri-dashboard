@@ -614,6 +614,7 @@ function TabelaClientes({ clientes, onClickCliente, filtroInicial, onFiltroConsu
         case "cmc":     return mul * ((a.cmc||0) - (b.cmc||0));
         case "razao":   return mul * ((a.status.razao||0) - (b.status.razao||0));
         case "rateio":  return mul * ((a.rateio_pct||0) - (b.rateio_pct||0));
+        case "ug":      return mul * (a.ug || "").localeCompare(b.ug || "");
         default:        return mul * a.nome.localeCompare(b.nome);
       }
     });
@@ -657,7 +658,7 @@ function TabelaClientes({ clientes, onClickCliente, filtroInicial, onFiltroConsu
             <tr className="bg-bone border-b border-stone-200">
               {[
                 ["nome",   "Cliente",   "left"],
-                [null,     "UG",        "left"],
+                ["ug",     "UG",        "left"],
                 ["rateio", "% Rateio",  "right"],
                 ["saldo",  "Saldo kWh", "right"],
                 ["cmc",    "CMC kWh",   "right"],
@@ -1951,8 +1952,15 @@ function TelaLTV({ clientes, onClickCliente }) {
   const [ord, setOrd] = useState({ col: "ltv", dir: "desc" });
   const [filtroMargem, setFiltroMargem] = useState("todos");
   const [filtroAtividade, setFiltroAtividade] = useState("ativos");
+  const [filtroAbertos, setFiltroAbertos] = useState("todos");
   const [mesSelecionado, setMesSelecionado] = useState(null);
+  const [ordMes, setOrdMes] = useState({ col: "ltv", dir: "desc" });
   const handleSort = (col) => setOrd(prev =>
+    prev.col === col
+      ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
+      : { col, dir: "desc" }
+  );
+  const handleSortMes = (col) => setOrdMes(prev =>
     prev.col === col
       ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
       : { col, dir: "desc" }
@@ -2084,6 +2092,7 @@ function TelaLTV({ clientes, onClickCliente }) {
       .sort((a, b) => {
         const mul = ord.dir === "desc" ? -1 : 1;
         if (ord.col === "nome") return mul * a.cliente.nome.localeCompare(b.cliente.nome);
+        if (ord.col === "ug")   return mul * (a.cliente.ug || "").localeCompare(b.cliente.ug || "");
         const key = SORT_KEY[ord.col] || "ltv";
         const va = a[key] ?? -Infinity, vb = b[key] ?? -Infinity;
         return mul * (va - vb);
@@ -2144,10 +2153,18 @@ function TelaLTV({ clientes, onClickCliente }) {
         }
       });
     });
+    const SORT_MES = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv" };
     return Object.values(porCliente)
       .map(r => ({ ...r, ltv: r.receitaTotal - r.despesaTotal }))
-      .sort((a, b) => b.ltv - a.ltv);
-  }, [mesSelecionado, clientes, filtroUG, filtroAtividade]);
+      .sort((a, b) => {
+        const mul = ordMes.dir === "desc" ? -1 : 1;
+        if (ordMes.col === "nome") return mul * a.cliente.nome.localeCompare(b.cliente.nome);
+        if (ordMes.col === "ug")   return mul * (a.cliente.ug || "").localeCompare(b.cliente.ug || "");
+        const key = SORT_MES[ordMes.col] || "ltv";
+        const va = a[key] ?? -Infinity, vb = b[key] ?? -Infinity;
+        return mul * (va - vb);
+      });
+  }, [mesSelecionado, clientes, filtroUG, filtroAtividade, ordMes]);
 
   if (!mesOptions.length) {
     return (
@@ -2158,9 +2175,15 @@ function TelaLTV({ clientes, onClickCliente }) {
   }
 
   // Linhas exibidas na tabela — KPIs/totais seguem sobre ativos do período.
-  const linhasTabela = filtroMargem === "negativa" ? dadosTabela.filter(r => r.ltv < 0)
-    : filtroMargem === "positiva" ? dadosTabela.filter(r => r.ltv >= 0)
-    : dadosTabela;
+  const linhasTabela = (() => {
+    let rows = filtroMargem === "negativa" ? dadosTabela.filter(r => r.ltv < 0)
+      : filtroMargem === "positiva" ? dadosTabela.filter(r => r.ltv >= 0)
+      : dadosTabela;
+    if (filtroAbertos === "receita_pendente")   rows = rows.filter(r => r.receitaPendente > 0);
+    if (filtroAbertos === "despesa_pendente")   rows = rows.filter(r => r.despesaPendente > 0);
+    if (filtroAbertos === "qualquer_pendente")  rows = rows.filter(r => r.receitaPendente > 0 || r.despesaPendente > 0);
+    return rows;
+  })();
   // Conta inativos com dados financeiros (independente do toggle, para exibir o botão)
   const nInativos = clientes.filter(c => c.inativo && c.financeiro?.temDados).length;
 
@@ -2269,6 +2292,15 @@ function TelaLTV({ clientes, onClickCliente }) {
           </select>
         </div>
         <div>
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Em aberto</label>
+          <select value={filtroAbertos} onChange={e => setFiltroAbertos(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            <option value="todos">Todos</option>
+            <option value="receita_pendente">Receita pendente</option>
+            <option value="despesa_pendente">Despesa pendente</option>
+            <option value="qualquer_pendente">Qualquer pendência</option>
+          </select>
+        </div>
+        <div>
           <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Situação</label>
           <select value={filtroAtividade} onChange={e => setFiltroAtividade(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
             <option value="ativos">Ativos</option>
@@ -2336,9 +2368,17 @@ function TelaLTV({ clientes, onClickCliente }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="bg-bone border-b border-stone-200">
-                  {[["Cliente","left"],["UG","left"],["Receita","right"],["Despesa","right"],["LTV","right"]].map(([h, align]) => (
-                    <th key={h} className={`px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] font-normal text-stone-600 whitespace-nowrap text-${align}`}>{h}</th>
-                  ))}
+                  {[["nome","Cliente","left"],["ug","UG","left"],["receita","Receita","right"],["despesa","Despesa","right"],["ltv","LTV","right"]].map(([sortCol, label, align]) => {
+                    const ativo = ordMes.col === sortCol;
+                    const seta = ativo ? (ordMes.dir === "desc" ? " ↓" : " ↑") : " ↕";
+                    return (
+                      <th key={sortCol} className={`px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] font-normal whitespace-nowrap text-${align}`}>
+                        <button onClick={() => handleSortMes(sortCol)} className={`hover:text-stone-800 transition-colors ${ativo ? "text-stone-800" : "text-stone-600"}`}>
+                          {label}<span className="text-stone-400">{seta}</span>
+                        </button>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -2395,7 +2435,7 @@ function TelaLTV({ clientes, onClickCliente }) {
                 {/* Colunas sortáveis: chave de sort + label. null = não sortável */}
                 {[
                   ["nome",    "Cliente",      "left"],
-                  [null,      "UG",           "left"],
+                  ["ug",      "UG",           "left"],
                   ["receita", "Receita",      "right"],
                   [null,      "Pago / Pend.", "right"],
                   ["despesa", "Despesa",      "right"],
