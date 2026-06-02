@@ -9,8 +9,8 @@ O sistema consome seis abas de uma planilha Google Sheets (publicadas como CSV) 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%. O ajuste interno é **ponderado por urgência** (clientes perto de crítico/excessivo convergem mais rápido) e o fechamento de soma é **ciente de colchão** (ver Otimizador, abaixo).
 - **Comparativo Atual vs Proposto** — projeta o estado de uma UG após aplicar **todas** as recomendações do otimizador, lado a lado com o atual. Cada cliente exibe **barras gêmeas** (`recebe` vs `consome`) em ambos os lados. Headline de carregamento, distribuição de saúde projetada em 6 meses, pulmão coletivo, riscos remanescentes e **edição manual persistente** dos %´s: os valores editados são **operativos** (entram no cenário, nas métricas e no Formulário Equatorial) e **persistem em `localStorage`** (sobrevivem a refresh/troca de UG/aba). Um **badge por linha** + **banner global** sinalizam quando o valor usado difere da proposta do otimizador. Botão **Gerar Formulário Equatorial** (PDF).
-- **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado).
-- **LTV — cockpit financeiro** — painel de decisão por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri) e margem (LTV = receita − despesa). Faixa de **KPIs** (Receita, Despesa, Margem R$/%, Nº de clientes no vermelho, R$ total sangrando, R$/kWh global), tabela com coluna **Margem %**, ratio Rec/Desp e filtro **"só no vermelho"** (clientes com LTV < 0, ordenados pelo prejuízo). Gráfico de barras empilhadas por mês (pago vs. pendente), filtros de período e UG, headers clicáveis. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente`.
+- **Clientes** — tabela filtrável/ordenável com status, flags e detalhe por cliente (modal com gráfico de saldo: 6 meses de histórico + 6 meses de projeção sob rateio atual e otimizado). Cabeçalhos clicáveis com toggle ↑↓ para todas as colunas. Filtro **Situação** (Ativos / Inativos / Todos) — inativos aparecem sempre ao final da lista, independente da ordenação ativa.
+- **LTV — cockpit financeiro** — painel de decisão por cliente: receita (cobrança Auri ao cliente), despesa (fatura Equatorial paga pela Auri) e margem (LTV = receita − despesa). Faixa de **KPIs** (Receita, Despesa, Margem R$/%, Nº de clientes no vermelho, R$ total sangrando, R$/kWh global), tabela com coluna **Margem %**, ratio Rec/Desp. Filtros: **Situação** (Ativos/Inativos/Todos), **Margem** (Todos/Margem positiva/Margem negativa) e **UG**. Atalhos de período pré-definidos (padrão: últimos 12 meses): Mês atual/anterior, Trimestre, Semestre, Últ. 12 meses, Ano atual/anterior, Desde o início. Gráfico de barras empilhadas por mês clicável: ao clicar num mês abre painel **"Composição · MM/AAAA"** com a relação de clientes e seus resultados naquele mês, totalizador incluso. Headers de tabela clicáveis. Seção "Financeiro — LTV" também aparece no modal `DetalheCliente`.
 
 Visual: design system **Auri Sol & Terra** (tema claro — cream/forest/sun/terra, fontes Fraunces + Manrope). Ver `tailwind.config.js` e `docs/handoff/sol-terra/`.
 
@@ -307,8 +307,8 @@ O modal de detalhe exibe "SALDO: HISTÓRICO + PROJEÇÃO 6M" com quatro linhas. 
 
 ### Como `montarChartData` monta os dados (`App.jsx`)
 
-1. **Apara meses em aberto no fim da série** — `parseSCAnalitico` inclui o mês corrente ainda sem fatura (`saldo = null`). A função descarta esses `null`s finais antes de fatiar a janela de 6 meses, garantindo que a linha sólida chegue direto ao ponto "hoje" sem gap.
-2. **Ponto "hoje"** — âncora entre histórico e projeção; recebe `saldoHist = saldo atual`.
+1. **Apara meses em aberto no fim da série** — `parseSCAnalitico` inclui o mês corrente ainda sem fatura (`saldo = null`). A função descarta esses `null`s finais antes de fatiar a janela de 6 meses, garantindo que a linha sólida chegue direto ao ponto de transição sem gap.
+2. **Ponto de transição** — âncora entre histórico e projeção; exibe o número do mês corrente (ex: `"06"`) em vez do label `"hoje"`. Se o último mês histórico já for o mês corrente, os valores de projeção são injetados diretamente naquele ponto em vez de criar um duplicado. Sem `ReferenceLine` vertical.
 3. **Projeção linear** — `saldo + n × ((pct/100 × distribuível) − cmc)` para n = 1..6 meses. O `pct` otimizado vem de `rateioFinalDoCliente` (valor **final do cenário, após o squeeze**) — consistente com o que o Comparativo mostra, e não o valor cru do estágio 2.
 4. **`connectNulls={true}`** — meses sem fatura no meio da série (dado ausente) são interpolados em vez de quebrarem a linha em segmentos soltos.
 
@@ -369,7 +369,7 @@ cliente.financeiro = {
 
 **Ratio Rec/Desp:** exibido na coluna final da tabela LTV. Cores: verde ≥ 2×, âmbar 1–2×, vermelho < 1×.
 
-**Ordenação:** todos os headers clicáveis (Cliente, Receita, Despesa, LTV, Rec/Desp) com toggle ↓/↑ no segundo clique.
+**Ordenação:** todos os headers clicáveis com toggle ↓/↑ no segundo clique. Inativos sempre ao final da tabela quando visíveis (Situação = "Inativos" ou "Todos").
 
 ---
 

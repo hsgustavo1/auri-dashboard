@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { RefreshCw, FileText } from "lucide-react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
+import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "./hooks/useSheetData";
 import {
   construirCenarioProposto,
@@ -86,12 +86,7 @@ function MetricaBox({ label, valor, unidade, cor = "#152a22" }) {
 
 function BannerValidacao({ ugs }) {
   const erros = ugs.filter(u => u.erro);
-  if (!erros.length) return (
-    <div className="border border-forest-300 bg-forest-50 px-5 py-3 mb-6 flex items-center gap-3">
-      <div className="w-2 h-2 rounded-full bg-[#2f7a52]" />
-      <p className="text-sm text-forest-800">Todas as {ugs.length} UGs com soma de rateio = 100% ✓</p>
-    </div>
-  );
+  if (!erros.length) return null;
   return (
     <div className="border border-terra-500/40 bg-terra-100/60 px-5 py-3 mb-6">
       <div className="flex items-start gap-3">
@@ -406,13 +401,20 @@ function montarChartData(cliente, ug, planoGlobal) {
   const ehGD2 = ug?.tipo === "GD2";
   const podeProjetar = !(cliente.ehUCGeradora && ehGD2) && cmc > 0 && distrib > 0;
 
-  // Ponto "Hoje" — ponte entre histórico e projeção.
-  pontos.push({
-    label: "hoje",
-    saldoHist: saldoNow,
-    projAtual: podeProjetar ? saldoNow : null,
-    projOtimizado: podeProjetar ? saldoNow : null,
-  });
+  // Ponte entre histórico e projeção — usa o mês corrente como label.
+  const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0');
+  const ultimoMesHist = ultimos.at(-1)?.slice(0, 2);
+  if (ultimoMesHist !== mesAtual) {
+    pontos.push({
+      label: mesAtual,
+      saldoHist: saldoNow,
+      projAtual: podeProjetar ? saldoNow : null,
+      projOtimizado: podeProjetar ? saldoNow : null,
+    });
+  } else if (podeProjetar && pontos.length > 0) {
+    pontos[pontos.length - 1].projAtual = saldoNow;
+    pontos[pontos.length - 1].projOtimizado = saldoNow;
+  }
 
   if (!podeProjetar) return pontos;
 
@@ -540,7 +542,6 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
                   {cliente.colchaoIdeal > 0 && (
                     <ReferenceLine y={cliente.colchaoIdeal} stroke="#2f7a52" strokeDasharray="3 3" label={{ value: "colchão ideal", position: "insideTopRight", fill: "#2f7a52", fontSize: 10 }} />
                   )}
-                  <ReferenceLine x="hoje" stroke="#6b6357" strokeDasharray="2 4" label={{ value: "hoje", position: "top", fill: "#6b6357", fontSize: 10 }} />
                   <Line type="monotone" dataKey="saldoHist" stroke="#c98a1f" strokeWidth={2} dot={{ fill: "#c98a1f", r: 3 }} name="Saldo (real)" connectNulls={true} />
                   <Line type="monotone" dataKey="consumoHist" stroke="#a89e89" strokeWidth={1.5} dot={false} strokeDasharray="3 3" name="Consumo (real)" connectNulls={true} />
                   <Line type="monotone" dataKey="projAtual" stroke="#e8a93c" strokeWidth={2} strokeDasharray="4 4" dot={{ fill: "#e8a93c", r: 2 }} name="Projeção · rateio atual" connectNulls={false} />
@@ -571,27 +572,39 @@ function TabelaClientes({ clientes, onClickCliente }) {
   const [filtroUG, setFiltroUG] = useState("todas");
   const [filtroStatus, setFiltroStatus] = useState("todos");
   const [busca, setBusca] = useState("");
-  const [ord, setOrd] = useState("status");
-  const [mostrarInativos, setMostrarInativos] = useState(false);
+  const [ord, setOrd] = useState({ col: "status", dir: "asc" });
+  const handleSort = (col) => setOrd(prev =>
+    prev.col === col
+      ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
+      : { col, dir: col === "status" ? "asc" : "desc" }
+  );
+  const [filtroAtividade, setFiltroAtividade] = useState("ativos");
 
   const nInativos = useMemo(() => clientes.filter(c => c.inativo).length, [clientes]);
 
   const lista = useMemo(() => {
     let r = clientes.filter(c => {
-      if (!mostrarInativos && c.inativo) return false;
+      if (filtroAtividade === "ativos" && c.inativo) return false;
+      if (filtroAtividade === "inativos" && !c.inativo) return false;
       if (filtroUG === "null") { if (c.ug) return false; }
       else if (filtroUG !== "todas") { if (c.ug !== filtroUG) return false; }
       if (filtroStatus !== "todos" && c.status.nivel !== filtroStatus) return false;
       if (busca && !c.nome.toLowerCase().includes(busca.toLowerCase()) && !c.uc.includes(busca)) return false;
       return true;
     });
-    if (ord === "status") r.sort((a, b) => (ORDEM_STATUS[a.status.nivel] - ORDEM_STATUS[b.status.nivel]) || (b.saldo - a.saldo));
-    else if (ord === "saldo_d") r.sort((a, b) => b.saldo - a.saldo);
-    else if (ord === "saldo_a") r.sort((a, b) => a.saldo - b.saldo);
-    else if (ord === "razao") r.sort((a, b) => b.status.razao - a.status.razao);
-    else r.sort((a, b) => a.nome.localeCompare(b.nome));
-    return r;
-  }, [clientes, filtroUG, filtroStatus, busca, ord, mostrarInativos]);
+    const mul = ord.dir === "desc" ? -1 : 1;
+    r.sort((a, b) => {
+      switch (ord.col) {
+        case "status":  return mul * ((ORDEM_STATUS[a.status.nivel] - ORDEM_STATUS[b.status.nivel]) || (b.saldo - a.saldo));
+        case "saldo":   return mul * ((a.saldo||0) - (b.saldo||0));
+        case "cmc":     return mul * ((a.cmc||0) - (b.cmc||0));
+        case "razao":   return mul * ((a.status.razao||0) - (b.status.razao||0));
+        case "rateio":  return mul * ((a.rateio_pct||0) - (b.rateio_pct||0));
+        default:        return mul * a.nome.localeCompare(b.nome);
+      }
+    });
+    return [...r.filter(c => !c.inativo), ...r.filter(c => c.inativo)];
+  }, [clientes, filtroUG, filtroStatus, busca, ord, filtroAtividade]);
 
   return (
     <div>
@@ -615,28 +628,43 @@ function TabelaClientes({ clientes, onClickCliente }) {
           </select>
         </div>
         <div>
-          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Ordenar</label>
-          <select value={ord} onChange={e => setOrd(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
-            {[["status","Prioridade"],["saldo_d","Maior saldo"],["saldo_a","Menor saldo"],["razao","Maior razão"],["nome","Nome"]].map(([v,l]) => <option key={v} value={v}>{l}</option>)}
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Situação</label>
+          <select value={filtroAtividade} onChange={e => setFiltroAtividade(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            <option value="ativos">Ativos</option>
+            <option value="inativos">Inativos{nInativos > 0 ? ` (${nInativos})` : ""}</option>
+            <option value="todos">Todos</option>
           </select>
         </div>
-        {nInativos > 0 && (
-          <button
-            onClick={() => setMostrarInativos(v => !v)}
-            className={`pb-0.5 px-3 py-2 text-xs border transition-colors ${mostrarInativos ? "border-stone-400 bg-stone-100 text-stone-700" : "border-stone-200 text-stone-600 hover:border-stone-400/50"}`}
-          >
-            {mostrarInativos ? "● Ocultar inativos" : `○ Mostrar inativos (${nInativos})`}
-          </button>
-        )}
         <div className="ml-auto text-xs text-stone-600 font-mono pb-2">{lista.length} / {clientes.filter(c => !c.inativo).length}</div>
       </div>
       <div className="border border-stone-200 overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-bone border-b border-stone-200">
-              {["Cliente","UG","% Rateio","Saldo kWh","CMC kWh","Razão","Status","Flags"].map(h => (
-                <th key={h} className="text-left px-3 py-3 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-normal whitespace-nowrap">{h}</th>
-              ))}
+              {[
+                ["nome",   "Cliente",   "left"],
+                [null,     "UG",        "left"],
+                ["rateio", "% Rateio",  "right"],
+                ["saldo",  "Saldo kWh", "right"],
+                ["cmc",    "CMC kWh",   "right"],
+                ["razao",  "Razão",     "right"],
+                ["status", "Status",    "left"],
+                [null,     "Flags",     "left"],
+              ].map(([sortCol, label, align], i) => {
+                const ativo = sortCol && ord.col === sortCol;
+                const seta = ativo ? (ord.dir === "desc" ? " ↓" : " ↑") : (sortCol ? " ↕" : "");
+                return (
+                  <th key={i} className={`px-3 py-3 text-[10px] uppercase tracking-[0.18em] font-normal whitespace-nowrap ${align === "right" ? "text-right" : "text-left"}`}>
+                    {sortCol ? (
+                      <button onClick={() => handleSort(sortCol)} className={`hover:text-stone-800 transition-colors ${ativo ? "text-stone-800" : "text-stone-600"}`}>
+                        {label}<span className="text-stone-400">{seta}</span>
+                      </button>
+                    ) : (
+                      <span className="text-stone-600">{label}</span>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -1882,6 +1910,13 @@ function comparaMes(a, b) {
   return parseMesAno(a) - parseMesAno(b);
 }
 
+function subMeses(mesAno, n) {
+  const [mm, yy] = mesAno.split("/").map(Number);
+  let m = mm - (n % 12), y = yy - Math.floor(n / 12);
+  if (m <= 0) { m += 12; y -= 1; }
+  return `${String(m).padStart(2, '0')}/${y}`;
+}
+
 function TelaLTV({ clientes, onClickCliente }) {
   // Coleta todos os Mês/Ano únicos presentes nas transações de qualquer cliente
   const mesOptions = useMemo(() => {
@@ -1890,17 +1925,50 @@ function TelaLTV({ clientes, onClickCliente }) {
     return [...set].sort(comparaMes);
   }, [clientes]);
 
-  const [periodoInicio, setPeriodoInicio] = useState(() => mesOptions[0] ?? "");
   const [periodoFim,    setPeriodoFim   ] = useState(() => mesOptions.at(-1) ?? "");
+  const [periodoInicio, setPeriodoInicio] = useState(() => {
+    const fim = mesOptions.at(-1);
+    if (!fim) return mesOptions[0] ?? "";
+    const alvo = subMeses(fim, 11);
+    return mesOptions.find(m => comparaMes(m, alvo) >= 0) ?? mesOptions[0] ?? "";
+  });
+  const [presetAtivo, setPresetAtivo] = useState("12m");
   const [filtroUG, setFiltroUG] = useState("todas");
   const [ord, setOrd] = useState({ col: "ltv", dir: "desc" });
-  const [soVermelho, setSoVermelho] = useState(false);
-  const [mostrarInativos, setMostrarInativos] = useState(false);
+  const [filtroMargem, setFiltroMargem] = useState("todos");
+  const [filtroAtividade, setFiltroAtividade] = useState("ativos");
+  const [mesSelecionado, setMesSelecionado] = useState(null);
   const handleSort = (col) => setOrd(prev =>
     prev.col === col
       ? { col, dir: prev.dir === "desc" ? "asc" : "desc" }
       : { col, dir: "desc" }
   );
+
+  const aplicarPreset = (id) => {
+    const fim = mesOptions.at(-1) ?? "";
+    if (!fim) return;
+    const [, yy] = fim.split("/").map(Number);
+    const snap = alvo => mesOptions.find(m => comparaMes(m, alvo) >= 0) ?? mesOptions[0] ?? "";
+    let ini, novoFim;
+    switch (id) {
+      case "mes_atual":    ini = fim;                          novoFim = fim;  break;
+      case "mes_anterior": ini = novoFim = subMeses(fim, 1);                  break;
+      case "trimestre":    ini = snap(subMeses(fim, 2));       novoFim = fim;  break;
+      case "semestre":     ini = snap(subMeses(fim, 5));       novoFim = fim;  break;
+      case "12m":          ini = snap(subMeses(fim, 11));      novoFim = fim;  break;
+      case "ano_atual":    ini = snap(`01/${yy}`);             novoFim = fim;  break;
+      case "ano_anterior":
+        ini     = snap(`01/${yy - 1}`);
+        novoFim = mesOptions.filter(m => m.endsWith(`/${yy - 1}`)).at(-1) ?? fim;
+        break;
+      case "inicio":       ini = mesOptions[0] ?? "";          novoFim = fim;  break;
+      default: return;
+    }
+    setPeriodoInicio(ini);
+    setPeriodoFim(novoFim);
+    setPresetAtivo(id);
+    setMesSelecionado(null);
+  };
 
   // Atualiza defaults quando os dados chegam
   const inicioPadrao = mesOptions[0] ?? "";
@@ -1944,8 +2012,9 @@ function TelaLTV({ clientes, onClickCliente }) {
         }
       });
 
-      // Tabela: respeita o toggle de inativos
-      if (!mostrarInativos && c.inativo) return;
+      // Tabela: respeita o filtro de atividade
+      if (filtroAtividade === "ativos" && c.inativo) return;
+      if (filtroAtividade === "inativos" && !c.inativo) return;
 
       if (!porCliente[c.uc]) {
         porCliente[c.uc] = {
@@ -1989,7 +2058,7 @@ function TelaLTV({ clientes, onClickCliente }) {
 
     const dadosGrafico = Object.values(porMes).sort((a, b) => comparaMes(a.mes, b.mes));
     const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", margem: "margemPct", ratio: "ratio", rspkwh: "rsPorKwh" };
-    const dadosTabela  = Object.values(porCliente)
+    const dadosTabelaOrdenados = Object.values(porCliente)
       .map(r => ({
         ...r,
         ltv:      r.receitaTotal - r.despesaTotal,
@@ -2005,6 +2074,10 @@ function TelaLTV({ clientes, onClickCliente }) {
         const va = a[key] ?? -Infinity, vb = b[key] ?? -Infinity;
         return mul * (va - vb);
       });
+    const dadosTabela = [
+      ...dadosTabelaOrdenados.filter(r => !r.cliente.inativo),
+      ...dadosTabelaOrdenados.filter(r => r.cliente.inativo),
+    ];
 
     // KPIs sempre sobre ativos, independente do toggle de inativos
     const dadosTabelaAtivos = dadosTabela.filter(r => !r.cliente.inativo);
@@ -2021,13 +2094,46 @@ function TelaLTV({ clientes, onClickCliente }) {
     totais.rsPorKwh = totais.consumoKwh > 0 ? totais.ltv / totais.consumoKwh : null;
 
     return { dadosGrafico, dadosTabela, dadosTabelaAtivos, totais };
-  }, [clientes, periodoInicio, periodoFim, filtroUG, ord, mostrarInativos]);
+  }, [clientes, periodoInicio, periodoFim, filtroUG, ord, filtroAtividade]);
 
   const ugNomes = useMemo(() => {
     const set = new Set();
     clientes.forEach(c => c.financeiro?.transacoes?.forEach(t => { if (t.ug) set.add(t.ug); }));
     return [...set].sort();
   }, [clientes]);
+
+  const dadosMes = useMemo(() => {
+    if (!mesSelecionado) return null;
+    const porCliente = {};
+    clientes.forEach(c => {
+      if (!c.financeiro?.temDados) return;
+      if (filtroAtividade === "ativos" && c.inativo) return;
+      if (filtroAtividade === "inativos" && !c.inativo) return;
+      const ts = (c.financeiro.transacoes || []).filter(t => {
+        if (t.mes !== mesSelecionado) return false;
+        if (filtroUG !== "todas" && t.ug !== filtroUG) return false;
+        return true;
+      });
+      if (!ts.length) return;
+      if (!porCliente[c.uc]) {
+        porCliente[c.uc] = { cliente: c, receitaTotal: 0, receitaPago: 0, receitaPendente: 0, despesaTotal: 0, despesaPago: 0, despesaPendente: 0 };
+      }
+      const pc = porCliente[c.uc];
+      ts.forEach(t => {
+        const pago = t.tipo === "Receita" ? (t.status === "Recebido" || t.status === "Implícita") : t.status === "Pago";
+        if (t.tipo === "Receita") {
+          pago ? (pc.receitaPago += t.valor) : (pc.receitaPendente += t.valor);
+          pc.receitaTotal += t.valor;
+        } else {
+          pago ? (pc.despesaPago += t.valor) : (pc.despesaPendente += t.valor);
+          pc.despesaTotal += t.valor;
+        }
+      });
+    });
+    return Object.values(porCliente)
+      .map(r => ({ ...r, ltv: r.receitaTotal - r.despesaTotal }))
+      .sort((a, b) => b.ltv - a.ltv);
+  }, [mesSelecionado, clientes, filtroUG, filtroAtividade]);
 
   if (!mesOptions.length) {
     return (
@@ -2038,7 +2144,9 @@ function TelaLTV({ clientes, onClickCliente }) {
   }
 
   // Linhas exibidas na tabela — KPIs/totais seguem sobre ativos do período.
-  const linhasTabela = soVermelho ? dadosTabela.filter(r => r.ltv < 0) : dadosTabela;
+  const linhasTabela = filtroMargem === "negativa" ? dadosTabela.filter(r => r.ltv < 0)
+    : filtroMargem === "positiva" ? dadosTabela.filter(r => r.ltv >= 0)
+    : dadosTabela;
   // Conta inativos com dados financeiros (independente do toggle, para exibir o botão)
   const nInativos = clientes.filter(c => c.inativo && c.financeiro?.temDados).length;
 
@@ -2090,17 +2198,44 @@ function TelaLTV({ clientes, onClickCliente }) {
         ))}
       </div>
 
+      {/* Atalhos de período */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5">
+        <span className="text-[10px] text-stone-500 uppercase tracking-[0.18em] mr-0.5 shrink-0">Período</span>
+        {[
+          { id: "mes_atual",    label: "Mês atual"      },
+          { id: "mes_anterior", label: "Mês anterior"   },
+          { id: "trimestre",    label: "Trimestre"      },
+          { id: "semestre",     label: "Semestre"       },
+          { id: "12m",          label: "Últ. 12 meses"  },
+          { id: "ano_atual",    label: "Ano atual"      },
+          { id: "ano_anterior", label: "Ano anterior"   },
+          { id: "inicio",       label: "Desde o início" },
+        ].map(({ id, label }) => (
+          <button
+            key={id}
+            onClick={() => aplicarPreset(id)}
+            className={`px-2.5 py-1.5 text-xs border transition-colors ${
+              presetAtivo === id
+                ? "border-sun-500/60 bg-sun-50/70 text-sun-700"
+                : "border-stone-200 text-stone-500 hover:border-stone-300 hover:text-stone-700"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* Filtros */}
       <div className="mb-6 flex flex-wrap gap-3 items-end">
         <div>
           <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">De</label>
-          <select value={periodoInicio || inicioPadrao} onChange={e => setPeriodoInicio(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+          <select value={periodoInicio || inicioPadrao} onChange={e => { setPeriodoInicio(e.target.value); setPresetAtivo(null); }} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
             {mesOptions.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
         <div>
           <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Até</label>
-          <select value={periodoFim || fimPadrao} onChange={e => setPeriodoFim(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+          <select value={periodoFim || fimPadrao} onChange={e => { setPeriodoFim(e.target.value); setPresetAtivo(null); }} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
             {mesOptions.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
@@ -2111,23 +2246,26 @@ function TelaLTV({ clientes, onClickCliente }) {
             {ugNomes.map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
-        <button
-          onClick={() => setSoVermelho(v => !v)}
-          className={`pb-0.5 px-3 py-2 text-xs border transition-colors ${soVermelho ? "border-[#a8482a] bg-terra-100/60 text-[#a8482a]" : "border-stone-200 text-stone-600 hover:border-[#a8482a]/50"}`}
-        >
-          {soVermelho ? "● Só no vermelho" : "○ Só no vermelho"}
-          {totais.nVermelho > 0 && <span className="ml-1.5 font-mono">{totais.nVermelho}</span>}
-        </button>
-        {nInativos > 0 && (
-          <button
-            onClick={() => setMostrarInativos(v => !v)}
-            className={`pb-0.5 px-3 py-2 text-xs border transition-colors ${mostrarInativos ? "border-stone-400 bg-stone-100 text-stone-700" : "border-stone-200 text-stone-600 hover:border-stone-400/50"}`}
-          >
-            {mostrarInativos ? "● Ocultar inativos" : `○ Mostrar inativos (${nInativos})`}
-          </button>
-        )}
+        <div>
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Margem</label>
+          <select value={filtroMargem} onChange={e => setFiltroMargem(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            <option value="todos">Todos</option>
+            <option value="positiva">Margem positiva</option>
+            <option value="negativa">Margem negativa{totais.nVermelho > 0 ? ` (${totais.nVermelho})` : ""}</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-[10px] text-stone-600 uppercase tracking-[0.18em] mb-1.5">Situação</label>
+          <select value={filtroAtividade} onChange={e => setFiltroAtividade(e.target.value)} className="bg-bone border border-stone-200 px-3 py-2 text-sm text-stone-800 outline-none focus:border-sun-500/60">
+            <option value="ativos">Ativos</option>
+            <option value="inativos">Inativos{nInativos > 0 ? ` (${nInativos})` : ""}</option>
+            <option value="todos">Todos</option>
+          </select>
+        </div>
         <div className="ml-auto pb-2 text-xs text-stone-600 font-mono">
-          {soVermelho ? `${linhasTabela.length} no vermelho` : `${dadosTabelaAtivos.length} ativos com dados`}
+          {filtroMargem === "negativa" ? `${linhasTabela.length} no vermelho`
+            : filtroMargem === "positiva" ? `${linhasTabela.length} margem positiva`
+            : `${dadosTabelaAtivos.length} ativos com dados`}
         </div>
       </div>
 
@@ -2137,7 +2275,14 @@ function TelaLTV({ clientes, onClickCliente }) {
           <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-1">Receita e Despesa por Mês</h3>
           <p className="text-[10px] text-stone-600 mb-4">Barras sólidas = valores pagos/recebidos · barras claras = pendentes</p>
           <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={dadosGrafico} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+            <BarChart
+              data={dadosGrafico}
+              margin={{ top: 5, right: 10, bottom: 5, left: 0 }}
+              style={{ cursor: "pointer" }}
+              onClick={data => {
+                if (data?.activeLabel) setMesSelecionado(prev => prev === data.activeLabel ? null : data.activeLabel);
+              }}
+            >
               <XAxis dataKey="mes" stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
               <YAxis stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} tickFormatter={v => `R$${(v/1000).toFixed(0)}k`} />
               <Tooltip
@@ -2146,12 +2291,84 @@ function TelaLTV({ clientes, onClickCliente }) {
                 formatter={(v, name) => [fmtBRL(v), name]}
               />
               <Legend wrapperStyle={{ fontSize: 11, color: "#6b6357", paddingTop: 8 }} />
-              <Bar dataKey="receitaPago"      stackId="r" fill="#2f7a52" name="Receita recebida" />
-              <Bar dataKey="receitaPendente"  stackId="r" fill="#a3d5b8" name="Receita pendente" />
-              <Bar dataKey="despesaPago"      stackId="d" fill="#a8482a" name="Despesa paga" />
-              <Bar dataKey="despesaPendente"  stackId="d" fill="#e8b4a0" name="Despesa pendente" />
+              <Bar dataKey="receitaPago" stackId="r" fill="#2f7a52" name="Receita recebida">
+                {dadosGrafico.map((e, i) => <Cell key={i} opacity={mesSelecionado && e.mes !== mesSelecionado ? 0.35 : 1} />)}
+              </Bar>
+              <Bar dataKey="receitaPendente" stackId="r" fill="#a3d5b8" name="Receita pendente">
+                {dadosGrafico.map((e, i) => <Cell key={i} opacity={mesSelecionado && e.mes !== mesSelecionado ? 0.35 : 1} />)}
+              </Bar>
+              <Bar dataKey="despesaPago" stackId="d" fill="#a8482a" name="Despesa paga">
+                {dadosGrafico.map((e, i) => <Cell key={i} opacity={mesSelecionado && e.mes !== mesSelecionado ? 0.35 : 1} />)}
+              </Bar>
+              <Bar dataKey="despesaPendente" stackId="d" fill="#e8b4a0" name="Despesa pendente">
+                {dadosGrafico.map((e, i) => <Cell key={i} opacity={mesSelecionado && e.mes !== mesSelecionado ? 0.35 : 1} />)}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Drill-down por mês */}
+      {mesSelecionado && dadosMes && (
+        <div className="border border-stone-200 bg-white shadow-auri-sm mb-6">
+          <div className="px-5 py-3 border-b border-stone-200 flex items-center justify-between">
+            <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">
+              Composição · <span className="text-stone-800">{mesSelecionado}</span>
+              <span className="ml-3 text-stone-400 normal-case tracking-normal">{dadosMes.length} cliente{dadosMes.length !== 1 ? "s" : ""}</span>
+            </h3>
+            <button onClick={() => setMesSelecionado(null)} className="text-[10px] uppercase tracking-[0.15em] text-stone-400 hover:text-stone-700 transition-colors">✕ fechar</button>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-bone border-b border-stone-200">
+                  {[["Cliente","left"],["UG","left"],["Receita","right"],["Despesa","right"],["LTV","right"]].map(([h, align]) => (
+                    <th key={h} className={`px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] font-normal text-stone-600 whitespace-nowrap text-${align}`}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dadosMes.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv }, i) => (
+                  <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"} ${cliente.inativo ? "opacity-60" : ""}`}>
+                    <td className="px-3 py-2">
+                      <div className="text-stone-800 truncate max-w-[200px]">
+                        {cliente.nome}
+                        {cliente.inativo && <span className="ml-2 text-[9px] px-1 py-px bg-stone-100 text-stone-500 border border-stone-300 uppercase align-middle">inativo</span>}
+                      </div>
+                      <div className="text-[10px] text-stone-500 font-mono">{cliente.uc}</div>
+                    </td>
+                    <td className="px-3 py-2 text-stone-600 whitespace-nowrap text-xs">{cliente.ug || "—"}</td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-[#2f7a52] whitespace-nowrap">
+                      {fmtBRL(receitaTotal)}
+                      <div className="text-[10px] text-stone-400">{fmtBRL(receitaPago)} / {fmtBRL(receitaPendente)}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs text-[#a8482a] whitespace-nowrap">
+                      {fmtBRL(despesaTotal)}
+                      <div className="text-[10px] text-stone-400">{fmtBRL(despesaPago)} / {fmtBRL(despesaPendente)}</div>
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-xs font-bold whitespace-nowrap" style={{ color: ltv >= 0 ? "#2f7a52" : "#a8482a" }}>
+                      {fmtBRL(ltv)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+              {dadosMes.length > 1 && (() => {
+                const totR = dadosMes.reduce((s, r) => s + r.receitaTotal, 0);
+                const totD = dadosMes.reduce((s, r) => s + r.despesaTotal, 0);
+                const totL = totR - totD;
+                return (
+                  <tfoot>
+                    <tr className="bg-bone border-t border-stone-300">
+                      <td className="px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-mono" colSpan={2}>Total · {dadosMes.length} clientes</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-[#2f7a52]">{fmtBRL(totR)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-[#a8482a]">{fmtBRL(totD)}</td>
+                      <td className="px-3 py-2.5 text-right font-mono text-xs font-bold" style={{ color: totL >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totL)}</td>
+                    </tr>
+                  </tfoot>
+                );
+              })()}
+            </table>
+          </div>
         </div>
       )}
 
