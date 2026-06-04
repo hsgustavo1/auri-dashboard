@@ -5,15 +5,29 @@ import RevisaoLacunas from "./RevisaoLacunas";
 import GeracaoContratos from "./GeracaoContratos";
 
 // ─── Auri Docs (módulo) ──────────────────────────────────────
-// Fluxo da esteira de aquisição em 3 etapas:
-//   1) Documentos  → upload + carregar a extração (JSON da skill)
-//   2) Revisão     → completar/corrigir lacunas; produz o registro revisado
-//   3) Contratos   → gerar os .docx preenchidos
+// Fluxo da esteira de aquisição:
+//   1) Documentos        → (opcional) upload + carregar a extração (JSON da skill)
+//   2) Revisão / Inputs  → SEMPRE liberada: completa via extração OU 100% manual
+//   3) Contratos         → liberada quando há cadastro; gera os .docx preenchidos
 const ETAPAS = [
   { id: "documentos", label: "Documentos", icon: Upload },
-  { id: "revisao", label: "Revisão & Lacunas", icon: ListChecks },
+  { id: "revisao", label: "Revisão / Inputs manuais", icon: ListChecks },
   { id: "contratos", label: "Contratos", icon: FileSignature },
 ];
+
+// Registro vazio para cadastro 100% manual (schema v1.1).
+const REGISTRO_VAZIO = {
+  schema_version: "1.1",
+  tipo_pessoa: "PF",
+  titular: { nome_ou_razao: "", cpf_cnpj: "", rg: "", rg_orgao: "", nacionalidade: "", data_nascimento: "", estado_civil: null, profissao: null, email: null, telefone: null },
+  representante_legal: null,
+  endereco: { logradouro: "", numero: "", complemento: "", bairro: "", municipio: "", uf: "", cep: "" },
+  unidade_consumidora: { uc: "", classe: "", modalidade: "", distribuidora: "", tipo_fornecimento: "" },
+  consumo: { consumo_medio_kwh: null, historico_kwh: [], ja_possui_gd: false, scee: null },
+  comercial: { desconto_garantido_pct: null, ug: "", energia_contratada_kwh_ano: null, numero_contrato: null },
+  aluguel_imovel: null,
+  validacoes: {},
+};
 
 // Exemplo fictício (sem dados reais) só para experimentar a tela.
 const EXEMPLO = {
@@ -74,12 +88,22 @@ export default function DocsModule() {
   const [etapa, setEtapa] = useState("documentos");
   const [registro, setRegistro] = useState(null);
 
-  const habilitadas = new Set(["documentos", ...(registro ? ["revisao", "contratos"] : [])]);
+  // Revisão sempre liberada; Contratos quando já há cadastro iniciado.
+  const habilitadas = new Set(["documentos", "revisao", ...(registro ? ["contratos"] : [])]);
 
+  // Carrega um registro (extração ou exemplo) e vai para a Revisão.
   const carregarRegistro = (obj) => {
     setRegistro(obj);
     setEtapa("revisao");
   };
+
+  // Abre a Revisão; se ainda não há registro, inicia um cadastro manual em branco.
+  const irParaRevisao = () => {
+    if (!registro) setRegistro(structuredClone(REGISTRO_VAZIO));
+    setEtapa("revisao");
+  };
+
+  const navegar = (id) => (id === "revisao" ? irParaRevisao() : setEtapa(id));
 
   return (
     <main className="max-w-[1400px] mx-auto px-6 py-10">
@@ -88,14 +112,18 @@ export default function DocsModule() {
         <span className="text-[10px] uppercase tracking-[0.2em] text-sun-600 border border-sun-400 rounded-pill px-2 py-0.5">Aquisição</span>
       </div>
       <p className="text-sm text-stone-600 max-w-2xl mb-8 leading-relaxed">
-        Recebe os documentos do cliente, completa o que falta e gera os contratos preenchidos —
-        reduzindo o trabalho manual do onboarding.
+        Comece pelos documentos (extração) <strong>ou</strong> vá direto para o cadastro manual.
+        Ao completar os dados, libera a geração dos contratos preenchidos.
       </p>
 
-      <Stepper etapaAtual={etapa} onIr={setEtapa} habilitadas={habilitadas} />
+      <Stepper etapaAtual={etapa} onIr={navegar} habilitadas={habilitadas} />
 
       {etapa === "documentos" && (
-        <IngestaoDocumentos onExtracaoCarregada={carregarRegistro} onUsarExemplo={() => carregarRegistro(structuredClone(EXEMPLO))} />
+        <IngestaoDocumentos
+          onExtracaoCarregada={carregarRegistro}
+          onUsarExemplo={() => carregarRegistro(structuredClone(EXEMPLO))}
+          onCadastrarManual={irParaRevisao}
+        />
       )}
 
       {etapa === "revisao" && registro && (

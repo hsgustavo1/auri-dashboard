@@ -18,7 +18,7 @@ function fmtTamanho(bytes) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export default function IngestaoDocumentos({ onExtracaoCarregada, onUsarExemplo }) {
+export default function IngestaoDocumentos({ onExtracaoCarregada, onUsarExemplo, onCadastrarManual }) {
   const [metodo, setMetodo] = useState("anexar");
   const [arquivos, setArquivos] = useState([]);
   const [caminhoLocal, setCaminhoLocal] = useState("");
@@ -164,6 +164,19 @@ export default function IngestaoDocumentos({ onExtracaoCarregada, onUsarExemplo 
         {erroJson && (
           <p className="mt-3 text-[11px] text-terra-600 flex items-center gap-1"><AlertTriangle size={12} /> {erroJson}</p>
         )}
+      </div>
+
+      {/* Bloco 3 — cadastro manual */}
+      <div className="border border-dashed border-stone-300 bg-bone/40 rounded-md p-6 flex items-center justify-between gap-4 flex-wrap">
+        <p className="text-xs text-stone-600 leading-relaxed">
+          Sem extração? <strong>Cadastre os dados do cliente manualmente</strong> e siga direto para os contratos.
+        </p>
+        <button
+          onClick={() => onCadastrarManual?.()}
+          className="px-5 py-2.5 text-xs uppercase tracking-[0.16em] rounded-pill border border-forest-600 text-forest-700 font-semibold hover:bg-forest-800 hover:text-cream transition-colors whitespace-nowrap"
+        >
+          Cadastrar manualmente →
+        </button>
       </div>
     </div>
   );
