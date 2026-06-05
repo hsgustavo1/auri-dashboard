@@ -12,6 +12,7 @@ import {
   projetarHorizonte,
   rsPorKwhGlobal12m,
   coletarInadimplencia,
+  deltaMensal,
 } from "../../utils/business";
 import { Edit3, RotateCcw } from "lucide-react";
 import { UG_NOMES } from "../../config";
@@ -2939,6 +2940,132 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
             <Tbody lista={debitoSemConfirmacao} secaoKey="deb" msgVazia="Nenhum débito automático sem confirmação." />
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Evolução ────────────────────────────────────────────────
+// Lê o histórico mensal acumulado (Historico_Indicadores). Cards = último mês
+// (+ delta vs. anterior quando ≥2 meses); gráficos crescem a cada snapshot.
+function CardEvolucao({ label, valor, delta, fmtDelta }) {
+  const cor = delta == null ? "#6b6357" : delta >= 0 ? "#2f7a52" : "#a8482a";
+  const seta = delta == null ? "" : delta >= 0 ? "▲" : "▼";
+  return (
+    <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4">
+      <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
+      <div className="text-xl font-extrabold tracking-tight tabular-nums whitespace-nowrap text-stone-800">{valor}</div>
+      <div className="text-[11px] font-mono mt-1" style={{ color: cor }}>
+        {delta == null ? "—" : `${seta} ${fmtDelta(Math.abs(delta))}`}
+      </div>
+    </div>
+  );
+}
+
+const CORES_STATUS_EVO = {
+  n_critico: "#a8482a", n_baixo: "#c98a1f", n_ideal: "#2f7a52", n_alto: "#2f6690", n_excessivo: "#6d4a8c",
+};
+const CORES_UG_EVO = ["#2f7a52", "#a8482a", "#c98a1f", "#2f6690", "#6d4a8c", "#3a6650", "#e8a93c"];
+
+function TelaEvolucao({ historico }) {
+  const fmtNum = (v) => (v == null ? "—" : Math.round(v).toLocaleString("pt-BR"));
+  const fmtPct = (v) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}%`);
+  const fmtKwh = (v) => (v == null ? "—" : `${v.toLocaleString("pt-BR", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`);
+
+  if (!historico || historico.length === 0) {
+    return (
+      <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md p-10 text-center">
+        <p className="text-stone-600 text-sm">Sem histórico ainda — o primeiro snapshot mensal aparecerá aqui.</p>
+      </div>
+    );
+  }
+
+  const ultimo = historico[historico.length - 1];
+  const inadAtual = (ultimo.inad_receitas_rs || 0) + (ultimo.inad_despesas_rs || 0) + (ultimo.inad_debito_rs || 0);
+
+  // delta da inadimplência total exige somar os 3 campos por mês — derivamos
+  // uma série temporária e reusamos deltaMensal.
+  const histInad = historico.map(h => ({
+    mes_ref: h.mes_ref,
+    inad_total: (h.inad_receitas_rs || 0) + (h.inad_despesas_rs || 0) + (h.inad_debito_rs || 0),
+  }));
+
+  const cards = [
+    { label: "Receita total",     ...deltaMensal(historico, "receita_total"),     fmt: fmtBRL0, fmtDelta: fmtBRL0 },
+    { label: "Despesa total",     ...deltaMensal(historico, "despesa_total"),     fmt: fmtBRL0, fmtDelta: fmtBRL0 },
+    { label: "LTV",               ...deltaMensal(historico, "ltv"),               fmt: fmtBRL0, fmtDelta: fmtBRL0 },
+    { label: "Margem %",          ...deltaMensal(historico, "margem_pct"),        fmt: fmtPct,  fmtDelta: fmtPct  },
+    { label: "R$/kWh 12m",        ...deltaMensal(historico, "rs_kwh_global_12m"), fmt: fmtKwh,  fmtDelta: fmtKwh  },
+    { label: "R$ estocado",       ...deltaMensal(historico, "estocado_total"),    fmt: fmtBRL0, fmtDelta: fmtBRL0 },
+    { label: "Inadimplência R$",  atual: inadAtual, delta: deltaMensal(histInad, "inad_total").delta, fmt: fmtBRL0, fmtDelta: fmtBRL0 },
+  ];
+
+  const colsUG = Object.keys(ultimo).filter(k => k.startsWith("carreg_"));
+  const seriesUG = colsUG.map((k, i) => ({
+    key: k,
+    label: k.replace("carreg_", "").replace(/_/g, " "),
+    cor: CORES_UG_EVO[i % CORES_UG_EVO.length],
+  }));
+
+  return (
+    <div className="space-y-8">
+      <div>
+        <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>Evolução</h2>
+        <p className="text-xs text-stone-600">
+          Histórico mensal de indicadores · {historico.length} {historico.length === 1 ? "mês" : "meses"} · último: {ultimo.mes_ref}
+        </p>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3">
+        {cards.map(c => (
+          <CardEvolucao key={c.label} label={c.label} valor={c.fmt(c.atual)} delta={c.delta} fmtDelta={c.fmtDelta} />
+        ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <GraficoEvolucao
+          titulo="Financeiro (R$)"
+          data={historico}
+          formatador={fmtBRL}
+          series={[
+            { key: "receita_total",  label: "Receita",  cor: "#2f7a52" },
+            { key: "despesa_total",  label: "Despesa",  cor: "#a8482a" },
+            { key: "ltv",            label: "LTV",      cor: "#2f6690" },
+            { key: "estocado_total", label: "Estocado", cor: "#6d4a8c" },
+          ]}
+        />
+        <GraficoEvolucao
+          titulo="R$/kWh global (12m)"
+          data={historico}
+          formatador={fmtKwh}
+          series={[{ key: "rs_kwh_global_12m", label: "R$/kWh", cor: "#c98a1f" }]}
+        />
+        <GraficoEvolucao
+          titulo="Inadimplência (R$)"
+          data={historico}
+          formatador={fmtBRL}
+          series={[
+            { key: "inad_receitas_rs", label: "Receitas em atraso", cor: "#a8482a" },
+            { key: "inad_despesas_rs", label: "Despesas não pagas",  cor: "#c98a1f" },
+            { key: "inad_debito_rs",   label: "Débito s/ confirm.",  cor: "#6d4a8c" },
+          ]}
+        />
+        <GraficoEvolucao
+          titulo="Distribuição de status"
+          data={historico}
+          formatador={fmtNum}
+          series={Object.keys(CORES_STATUS_EVO).map(k => ({
+            key: k,
+            label: k.replace("n_", ""),
+            cor: CORES_STATUS_EVO[k],
+          }))}
+        />
+        <GraficoEvolucao
+          titulo="Carregamento por UG (%)"
+          data={historico}
+          formatador={fmtPct}
+          series={seriesUG}
+        />
       </div>
     </div>
   );
