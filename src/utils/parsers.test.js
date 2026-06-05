@@ -78,3 +78,53 @@ describe("parseLegado", () => {
     expect(desp.kwh).toBeCloseTo(350);
   });
 });
+
+import { parseHistorico } from "./parsers.js";
+
+describe("parseHistorico", () => {
+  const CSV = `mes_ref,registrado_em,receita_total,rs_kwh_global_12m,clientes_ativos,carreg_Piloto
+2026-05,2026-06-05T15:52:14.813Z,"557254,47","0,7536",40,"102,9"
+2026-04,2026-05-01T10:00:00.000Z,"500000,00","0,7000",38,"99,5"`;
+
+  it("converte colunas numéricas de formato BR", () => {
+    const r = parseHistorico(CSV);
+    const maio = r.find(x => x.mes_ref === "2026-05");
+    expect(maio.receita_total).toBeCloseTo(557254.47, 2);
+    expect(maio.rs_kwh_global_12m).toBeCloseTo(0.7536, 4);
+    expect(maio.clientes_ativos).toBe(40);
+    expect(maio.carreg_Piloto).toBeCloseTo(102.9, 1);
+  });
+
+  it("mantém mes_ref e registrado_em como string", () => {
+    const r = parseHistorico(CSV);
+    expect(r[0].mes_ref).toBe("2026-04");
+    expect(typeof r[0].registrado_em).toBe("string");
+  });
+
+  it("ordena por mes_ref ascendente mesmo se o CSV vier desordenado", () => {
+    const r = parseHistorico(CSV);
+    expect(r.map(x => x.mes_ref)).toEqual(["2026-04", "2026-05"]);
+  });
+
+  it("tolera separador de milhar com ponto", () => {
+    const csv = `mes_ref,registrado_em,receita_total\n2026-05,x,"1.234.567,89"`;
+    expect(parseHistorico(csv)[0].receita_total).toBeCloseTo(1234567.89, 2);
+  });
+
+  it("descarta linhas sem mes_ref", () => {
+    const csv = `mes_ref,registrado_em,receita_total\n,x,"100,00"\n2026-05,x,"200,00"`;
+    const r = parseHistorico(csv);
+    expect(r).toHaveLength(1);
+    expect(r[0].mes_ref).toBe("2026-05");
+  });
+
+  it("input vazio → []", () => {
+    expect(parseHistorico("")).toEqual([]);
+    expect(parseHistorico("mes_ref,registrado_em,receita_total")).toEqual([]);
+  });
+
+  it("campo numérico vazio → null", () => {
+    const csv = `mes_ref,registrado_em,receita_total\n2026-05,x,`;
+    expect(parseHistorico(csv)[0].receita_total).toBeNull();
+  });
+});

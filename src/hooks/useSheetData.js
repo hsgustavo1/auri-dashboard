@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { SHEET_URLS } from "../config";
 import { buildDataset } from "../utils/dataset";
+import { parseHistorico } from "../utils/parsers";
 
 async function fetchCSV(url) {
   const res = await fetch(url);
@@ -27,7 +28,16 @@ export function useSheetData() {
         fatText, clientesText, scText, infoText, rdText, legadoText,
       });
 
-      setState({ data: { clientes, ugsValidadas, planoGlobal }, loading: false, error: null, lastUpdated: new Date() });
+      // Histórico mensal: fonte opcional. Se a aba sumir/despublicar ou falhar,
+      // o resto do dashboard não pode quebrar — cai para [].
+      let historico = [];
+      try {
+        historico = parseHistorico(await fetchCSV(SHEET_URLS.historico));
+      } catch (e) {
+        console.warn("[useSheetData] histórico indisponível:", e.message);
+      }
+
+      setState({ data: { clientes, ugsValidadas, planoGlobal, historico }, loading: false, error: null, lastUpdated: new Date() });
     } catch (err) {
       setState(s => ({ ...s, loading: false, error: err.message }));
     }
