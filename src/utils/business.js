@@ -1620,3 +1620,18 @@ export function computeIndicadores(clientes, ugsValidadas = [], { mesRef = null 
     ...carreg,
   };
 }
+
+// ─── deltaMensal ─────────────────────────────────────────────
+// Para a aba Evolução: valor do último mês de `historico` (assumido ordenado
+// ascendente) e a diferença para o mês anterior. delta = null com < 2 meses ou
+// quando algum dos dois valores é null.
+export function deltaMensal(historico, campo) {
+  if (!Array.isArray(historico) || historico.length === 0) {
+    return { atual: null, delta: null };
+  }
+  const atual = historico[historico.length - 1]?.[campo] ?? null;
+  if (historico.length < 2) return { atual, delta: null };
+  const anterior = historico[historico.length - 2]?.[campo] ?? null;
+  const delta = (atual != null && anterior != null) ? atual - anterior : null;
+  return { atual, delta };
+}

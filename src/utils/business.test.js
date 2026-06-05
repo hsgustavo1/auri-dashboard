@@ -687,3 +687,29 @@ describe("computeIndicadores", () => {
     expect(r.receitasAtraso).toHaveLength(0);
   });
 });
+
+import { deltaMensal } from "./business.js";
+
+describe("deltaMensal", () => {
+  const hist = [
+    { mes_ref: "2026-04", receita_total: 500 },
+    { mes_ref: "2026-05", receita_total: 557 },
+  ];
+
+  it("atual = último mês, delta = atual - anterior", () => {
+    expect(deltaMensal(hist, "receita_total")).toEqual({ atual: 557, delta: 57 });
+  });
+
+  it("delta null quando só há 1 mês", () => {
+    expect(deltaMensal([hist[1]], "receita_total")).toEqual({ atual: 557, delta: null });
+  });
+
+  it("histórico vazio → atual e delta null", () => {
+    expect(deltaMensal([], "receita_total")).toEqual({ atual: null, delta: null });
+  });
+
+  it("delta null se algum dos valores for null", () => {
+    const h = [{ mes_ref: "2026-04", x: null }, { mes_ref: "2026-05", x: 10 }];
+    expect(deltaMensal(h, "x")).toEqual({ atual: 10, delta: null });
+  });
+});
