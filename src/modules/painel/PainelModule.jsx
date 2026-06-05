@@ -99,6 +99,14 @@ function MetricaBox({ label, valor, unidade, cor = "#152a22" }) {
 // series = [{ key, label, cor }]. data = linhas do histórico (mes_ref + campos).
 // dot sempre visível para que históricos de 1 ponto apareçam.
 function GraficoEvolucao({ titulo, data, series, formatador }) {
+  // Séries ocultas (toggle ao clicar na legenda). Set de dataKeys.
+  const [ocultas, setOcultas] = useState(() => new Set());
+  const toggle = (key) => setOcultas(prev => {
+    const next = new Set(prev);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    return next;
+  });
+
   return (
     <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md p-5">
       <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-4">{titulo}</h3>
@@ -111,7 +119,14 @@ function GraficoEvolucao({ titulo, data, series, formatador }) {
             labelStyle={{ color: "#1a1812" }}
             formatter={(v, name) => [formatador(v), name]}
           />
-          <Legend iconType="plainline" wrapperStyle={{ fontSize: 11, color: "#6b6357", paddingTop: 8 }} />
+          <Legend
+            iconType="plainline"
+            wrapperStyle={{ fontSize: 11, color: "#6b6357", paddingTop: 8, cursor: "pointer" }}
+            onClick={(o) => toggle(o.dataKey)}
+            formatter={(value, entry) => (
+              <span style={{ color: ocultas.has(entry.dataKey) ? "#bcb4a3" : "#6b6357" }}>{value}</span>
+            )}
+          />
           {series.map(s => (
             <Line
               key={s.key}
@@ -122,6 +137,7 @@ function GraficoEvolucao({ titulo, data, series, formatador }) {
               strokeWidth={2}
               dot={{ fill: s.cor, r: 3 }}
               connectNulls
+              hide={ocultas.has(s.key)}
             />
           ))}
         </LineChart>
