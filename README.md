@@ -1,10 +1,15 @@
-# Auri Energy Dashboard
+# Auri Energy — App
 
-Dashboard operacional para gestão de rateio de créditos de energia solar distribuída (GD) entre Unidades Geradoras (UGs) e Unidades Consumidoras (UCs) clientes.
+Aplicação operacional da Auri Energia, organizada como **App Shell** (`src/App.jsx`) com módulos de negócio isolados. Hoje são dois:
 
-## Visão Geral
+- **Painel** (`src/modules/painel/`) — o dashboard de gestão de rateio de créditos de energia solar distribuída (GD) entre Unidades Geradoras (UGs) e Unidades Consumidoras (UCs). É o conteúdo descrito na maior parte deste README.
+- **Docs** (`src/modules/docs/`) — **Auri Docs**, a esteira de aquisição de clientes: dos documentos (extração) ao cadastro revisado e à geração dos contratos `.docx`. Ver a seção [Auri Docs](#auri-docs--esteira-de-aquisição).
 
-O sistema consome seis abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
+A casca troca de módulo por uma barra superior; novos módulos (Faturas, NF, CRM, Financeiro) entram como irmãos em `MODULOS` (`App.jsx`). O restante deste documento detalha o **módulo Painel** salvo onde indicado.
+
+## Painel — Visão Geral
+
+O módulo Painel consome seis abas de uma planilha Google Sheets (publicadas como CSV) e entrega cinco telas:
 
 - **Visão Geral** — cards das 7 UGs: carregamento, nº de clientes, capacidade, distribuição de saúde de saldo.
 - **Otimizador Global** — pipeline em 5 estágios que sugere alocação de UCs órfãs (best-fit), swaps entre UGs e ajustes incrementais de rateio para aproximar o carregamento de 100%. O ajuste interno é **ponderado por urgência** (clientes perto de crítico/excessivo convergem mais rápido) e o fechamento de soma é **ciente de colchão** (ver Otimizador, abaixo).
@@ -137,10 +142,13 @@ src/hooks/useSheetData.js   ← fetch paralelo das 6 abas + parse + merge + buil
       └── src/config.js              ← URLs (incl. rdEquatorial + legado), mapeamentos UG/UC,
                                        DADOS_FIXOS_AURI, CLASSE_POR_UG, OPT_PARAMS
       ▼
-src/App.jsx                 ← UI (React + Recharts + Tailwind/Auri)
+src/App.jsx                 ← App Shell (troca de módulos: Painel | Docs)
+src/modules/painel/PainelModule.jsx  ← UI do Painel (React + Recharts + Tailwind/Auri)
   ├── Visão Geral · UG Detalhe · Otimizador · Comparativo · Clientes · LTV (cockpit financeiro)
   └── modais: DetalheCliente (gráfico hist+projeção + seção Financeiro LTV) · FormularioRateio (PDF Equatorial)
 ```
+
+> Histórico: a UI do Painel morava em `src/App.jsx`. Com a chegada do módulo Auri Docs, `App.jsx` virou a casca (App Shell) e a tela de rateio passou a ser `src/modules/painel/PainelModule.jsx` — o conteúdo e os componentes internos são os mesmos descritos abaixo.
 
 ---
 
@@ -233,9 +241,17 @@ Na seção 2 do formulário, a lista segue a regra regulatória por tipo de gera
 ```
 auri-dashboard/
 ├── src/
-│   ├── App.jsx              # UI completa (5 telas + 2 modais)
-│   ├── config.js            # URLs (5 abas), UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
+│   ├── App.jsx              # App Shell — barra superior + troca de módulos (Painel | Docs)
+│   ├── main.jsx
+│   ├── config.js            # URLs (6 abas), UC_GERADORA_*, CLASSE_POR_UG, DADOS_FIXOS_AURI, OPT_PARAMS
 │   ├── hooks/useSheetData.js
+│   ├── modules/
+│   │   ├── painel/PainelModule.jsx   # Painel — UI completa (5 telas + 2 modais)
+│   │   └── docs/                      # Auri Docs — esteira de aquisição
+│   │       ├── DocsModule.jsx         #   shell do fluxo (stepper: Documentos → Revisão → Contratos)
+│   │       ├── IngestaoDocumentos.jsx #   etapa 1: origem (pasta local / Drive) + carregar extração
+│   │       ├── RevisaoLacunas.jsx     #   etapa 2: revisão/cadastro manual com badges de "falta"
+│   │       └── GeracaoContratos.jsx   #   etapa 3: gera os .docx + renomeia a pasta do cliente
 │   ├── utils/
 │   │   ├── business.js          # CMC, status, carregamento type-aware, otimizador (passo por urgência +
 │   │   │                        # squeeze cushion-aware), cenários, projeções,
@@ -243,12 +259,18 @@ auri-dashboard/
 │   │   ├── business.test.js     # testes unitários de business.js (Vitest)
 │   │   ├── parsers.js           # parsers CSV (incl. parseRDEquatorial, parseLegado)
 │   │   ├── parsers.test.js      # testes unitários de parsers.js (Vitest)
+│   │   ├── aquisicao.js         # Auri Docs: validação CPF/CNPJ, normalização UC/endereço, campos faltantes
+│   │   ├── aquisicao.test.js    # testes unitários de aquisicao.js (Vitest)
+│   │   ├── contratos.js         # Auri Docs: montarDadosContrato + geração .docx (docxtemplater)
 │   │   ├── formularioRateio.js
 │   │   ├── pdfRateioGenerator.js
 │   │   └── endereco.js
 │   └── components/FormularioRateio.jsx
+├── scripts/                 # CLIs Node (fora do bundle): aquisicao-cli, gerar-contratos-cli, make-templates.py
+├── public/contratos-modelos/ # templates .docx dos contratos (Adesão / Locação Equip. / Locação Imóvel — PF/PJ)
+├── docs/auri-docs/          # specs e schema da esteira de aquisição
 ├── tailwind.config.js       # preset Auri Sol & Terra (cores/fontes/sombras)
-├── vite.config.js           # code-splitting: chunks react / recharts / pdf separados
+├── vite.config.js           # code-splitting + plugin dev-only /api/renomear-pasta
 └── README.md
 ```
 
@@ -260,7 +282,7 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
-npm test           # testes unitários (Vitest) — 82 testes
+npm test           # testes unitários (Vitest) — 115 testes
 npm run lint       # análise estática (ESLint)
 npm run test:watch # modo watch para desenvolvimento
 ```
@@ -279,6 +301,37 @@ O bundle de produção é dividido em chunks independentes para melhor caching H
 | `index` (app) | ~42 kB | Código da aplicação |
 
 Configurado em `vite.config.js` via `manualChunks` (Rolldown/Vite 8).
+
+---
+
+## Auri Docs — Esteira de Aquisição
+
+Módulo **Docs** (`src/modules/docs/`): transforma os documentos de um novo cliente em **contratos `.docx` preenchidos**. Fluxo em três etapas (stepper em `DocsModule.jsx`):
+
+1. **Documentos** (`IngestaoDocumentos.jsx`) — o operador informa a origem dos documentos do cliente (conta de energia Equatorial, RG, CNH): **pasta local** ou **link do Google Drive**. O botão **Copiar instrução** monta o comando da skill (`extrai a pasta <X>` / `extrai a pasta <link> do Drive`) para rodar no terminal do Claude. Depois, **Buscar última extração** lê o JSON gerado pela skill (servido em `/_extracoes/ultima.json`), ou carrega-se o `.json` à mão, ou usa-se **Ver com exemplo**. Há também o atalho **Cadastrar manualmente**.
+2. **Revisão / Inputs manuais** (`RevisaoLacunas.jsx`) — **sempre liberada**: o cadastro pode vir da extração **ou** ser 100% manual. Toggle PF/PJ define as seções:
+   - **PF:** Titular · Endereço · Responsável pelo contato · Unidade consumidora.
+   - **PJ:** Empresa · Endereço · Representante legal · Unidade consumidora · Responsável pelo contato.
+   - Comuns: **Consumo & Comercial** (energia contratada = `consumo × 12`, auto) e **Contrato de aluguel** (com flag "copiar endereço do titular").
+   - Cada campo obrigatório ainda vazio recebe o badge **"falta"** (via `validarRegistro` em `aquisicao.js`). Um banner mostra "Tudo preenchido" ou "N campo(s) a completar". **Baixar JSON revisado** salva o registro com `validacoes.revisado = true`.
+3. **Contratos** (`GeracaoContratos.jsx`) — gera os três contratos em `.docx`, na variante **PF/PJ** conforme o cadastro: **Termo de Adesão (Consórcio)**, **Locação de Equipamento** e **Locação de Imóvel**. "Baixar todos" gera os três. Preenchimento 100% client-side por `docxtemplater` (placeholders `{{...}}`) a partir dos modelos em `public/contratos-modelos/`. Há ainda um painel para **renomear a pasta do cliente** para o nome canônico `Nome do cliente - UC` (pasta local via `/api/renomear-pasta`; Drive via instrução copiada para a skill).
+
+### Schema do registro
+
+O registro é um JSON achatado em torno de `titular` (PF) / `representante_legal` (PJ), com blocos `endereco`, `contato`, `unidade_consumidora`, `consumo`, `comercial` e `aluguel_imovel`. A referência de campos, o mapa de origem de cada dado e o que falta preencher à mão estão em [`docs/auri-docs/schema-extracao.md`](docs/auri-docs/schema-extracao.md).
+
+> **Nota de versão:** o cadastro manual em branco (`REGISTRO_VAZIO`) carrega `schema_version: "1.2"`, mas a **forma efetiva dos dados é a v1.1** (`titular`/`endereco`) acrescida do bloco `contato` (`usar_titular` / `usar_representante`) e do `aluguel_imovel` com `copiar_endereco`. O **v1.2 "por papéis"** (`conta` × `contratante` × `contato`) descrito em `docs/auri-docs/spec-app-extracao-e-papeis.md` **não foi implementado** — fica como item de roadmap a reanalisar (ver os avisos no topo daqueles docs).
+
+### Validação e CLIs (`scripts/`, fora do bundle)
+
+- `aquisicao.js` — funções puras: `validarCPF/CNPJ/CpfCnpj`, `normalizarUC`, `normalizarEndereco`, `conferirTitular`, `calcularCamposFaltantes`, `validarRegistro` (cobertas por `aquisicao.test.js`).
+- `scripts/aquisicao-cli.mjs` — valida/enriquece um `registro.json` → `registro.validado.json` (usado pela skill `auri-docs-extrai`).
+- `scripts/gerar-contratos-cli.mjs` — gera os `.docx` a partir de um registro, fora do navegador (reusa `montarDadosContrato`/`CONTRATOS`).
+- `scripts/make-templates.py` — (re)gera os modelos `.docx` de contrato em `public/contratos-modelos/`.
+
+### Ponte local (dev) e privacidade
+
+A extração roda na **skill `auri-docs-extrai`** (Claude Code, fora do app — usa visão para RG/CNH e markitdown para a conta) e grava `public/_extracoes/ultima.json`, que o app lê via "Buscar última extração". Em `npm run dev`, o `vite.config.js` expõe ainda `POST /api/renomear-pasta` (renomeia a pasta local). Ambos são **só de desenvolvimento** — não entram no build de produção. **`public/_extracoes/` está no `.gitignore`** porque os registros contêm PII (CPF, RG); nunca são versionados nem publicados no Vercel.
 
 ---
 
@@ -382,5 +435,7 @@ cliente.financeiro = {
 - Cockpit financeiro Fases 3–4: decomposição do prejuízo no `DetalheCliente` (por que o cliente sangra) e linha de margem mensal + marcador do reajuste ANEEL de outubro.
 - Automação pós-PDF: envio do formulário Equatorial por e-mail, escrita de volta na Auribase e criação de tarefa no ClickUp (ver detalhes internos).
 - Integração de escrita de volta ao Google Sheets.
+- **Auri Docs — schema v1.2 "por papéis"** (`conta` × `contratante` × `contato`, com flags de fonte): especificado em `docs/auri-docs/spec-app-extracao-e-papeis.md` mas **não implementado**; reanalisar no roadmap antes de retomar (o app atual usa o schema v1.1 + bloco `contato`).
+- **Auri Docs — ponte de extração no app:** disparar a skill `auri-docs-extrai` de dentro do app (endpoint dev `/api/extrair-docs`) em vez do passo manual no terminal.
 
 > Persistência de estado em `localStorage` (overrides manuais do Comparativo) — **implementado**.

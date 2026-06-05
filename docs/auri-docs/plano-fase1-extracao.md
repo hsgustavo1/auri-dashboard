@@ -1,5 +1,9 @@
 # Auri Docs — Fase 1A: Motor de Extração (Plano de Implementação)
 
+> ✅ **STATUS: CONCLUÍDO.** Este plano foi executado: `src/utils/aquisicao.js` (+ testes),
+> `scripts/aquisicao-cli.mjs` e a skill `auri-docs-extrai` existem e estão em uso. Mantido
+> como registro histórico da Fase 1A. O schema vigente está em `schema-extracao.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Transformar os documentos de um cliente (conta Equatorial, RG, CNH) num JSON validado (schema v1.1), gravado na pasta do cliente, pronto para alimentar a UI (Fase 2) e a geração de contratos (Fase 3).

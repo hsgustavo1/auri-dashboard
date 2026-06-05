@@ -5,6 +5,12 @@
 > Sem dados pessoais — apenas estrutura. Baseado em documentos-amostra (não cadastrar
 > valores pessoais das amostras).
 
+> ✅ **Estado atual (jun/2026):** este é o schema **efetivamente em uso** no app (v1.1 +
+> bloco `contato` + `aluguel_imovel` achatado). A skill `auri-docs-extrai` emite uma forma
+> compatível e o app completa o resto na Revisão (cadastro 100% manual permitido). O modelo
+> alternativo **v1.2 "por papéis"** (`conta`/`contratante`) descrito em
+> `spec-app-extracao-e-papeis.md` **não foi implementado** — é roadmap.
+
 ## Documentos de entrada (do cliente)
 
 | Documento | Formato típico | Extração | Observações |
@@ -22,13 +28,15 @@ Pontos de atenção do motor:
 
 ## Contratos gerados (saída)
 
-Três por cliente, com variante **PF** e **PJ** (variação leve):
+Três por cliente, com variante **PF** e **PJ** (variação leve). **Os seis templates `.docx`
+já existem** em `public/contratos-modelos/` (`adesao`, `locacao-equip`, `aluguel` × `pf`/`pj`)
+e os três aparecem como `pronto: true` em `CONTRATOS` (`src/utils/contratos.js`):
 
-| Contrato | Papel do cliente | Papel da Auri |
-|---|---|---|
-| Termo de Adesão (Consórcio) + Procuração | Consorciado | Líder |
-| Locação de Equipamento | Locatário | Locadora |
-| Locação de Imóvel | **Locador** (cede o imóvel) | Locatário |
+| Contrato | id | Papel do cliente | Papel da Auri |
+|---|---|---|---|
+| Termo de Adesão (Consórcio) + Procuração | `adesao` | Consorciado | Líder |
+| Locação de Equipamento | `locacao` | Locatário | Locadora |
+| Locação de Imóvel | `aluguel` | **Locador** (cede o imóvel) | Locatário |
 
 Diferença PF × PJ → **um template com blocos condicionais** (`tipo_pessoa`):
 - PF: nome + CPF; assina o próprio.
@@ -53,31 +61,51 @@ estado civil · profissão · e-mail · telefone · (aluguel) valor mensal, praz
 início, endereço do imóvel · (PJ) representante legal: nome, cargo, CPF, RG+órgão,
 endereço, qualificação.
 
-## Schema do JSON de extração (v1.1) — o "contrato de dados"
+## Schema do JSON — o "contrato de dados" (em uso no app)
+
+Forma efetiva consumida por `RevisaoLacunas.jsx`, `aquisicao.js` e `contratos.js`. O cadastro
+manual em branco (`REGISTRO_VAZIO` em `DocsModule.jsx`) carrega o rótulo `schema_version: "1.2"`,
+mas a **estrutura é a v1.1** abaixo + o bloco `contato`. (A skill `auri-docs-extrai` ainda emite
+`_conta_cpf`/`_doc_cpf` auxiliares para a conferência de titular; o app os ignora na Revisão.)
 
 ```jsonc
 {
-  "schema_version": "1.1",
+  "schema_version": "1.1",            // o cadastro manual rotula "1.2", mesma estrutura
   "tipo_pessoa": "PF | PJ",
-  "titular": {
+  "titular": {                        // PF: pessoa; PJ: razão social + CNPJ em nome_ou_razao/cpf_cnpj
     "nome_ou_razao": "", "cpf_cnpj": "", "rg": "", "rg_orgao": "",
     "nacionalidade": "", "data_nascimento": "",
     "estado_civil": null, "profissao": null,   // ⚠ lacuna
-    "email": null, "telefone": null            // ⚠ lacuna (PJ às vezes)
+    "email": null, "telefone": null            // ⚠ lacuna
   },
-  "representante_legal": null, // ⚠ só PJ: { nome, cargo, cpf, rg, rg_orgao, endereco, qualificacao }
+  "representante_legal": null, // só PJ: { nome, cargo, cpf, rg, rg_orgao, nacionalidade,
+                               //          data_nascimento, estado_civil, profissao, email, telefone }
+  "contato": {                 // responsável pela interface com a Auri (pode ser terceiro)
+    "usar_titular": false,        // PF: copia nome/telefone/email do titular
+    "usar_representante": false,  // PJ: copia do representante legal
+    "nome": null, "telefone": null, "email": null
+  },
   "endereco": { "logradouro":"", "numero":"", "complemento":"", "bairro":"",
                 "municipio":"", "uf":"", "cep":"" },
-  "unidade_consumidora": { "uc":"", "uc_normalizada":"", "classe":"",
-                "modalidade":"", "distribuidora":"", "tipo_fornecimento":"" },
-  "consumo": { "consumo_medio_kwh":0, "historico_kwh":[], "ja_possui_gd":false, "scee":null },
+  "unidade_consumidora": { "uc":"", "classe":"", "modalidade":"",
+                "distribuidora":"", "tipo_fornecimento":"" },
+  "consumo": { "consumo_medio_kwh":null, "historico_kwh":[], "ja_possui_gd":false, "scee":null },
   "comercial": { "desconto_garantido_pct":null, "ug":"",
-                "energia_contratada_kwh_ano":null, "numero_contrato":null }, // origem: Auribase
-  "aluguel_imovel": null, // ⚠ { valor_mensal, prazo_meses, data_inicio, endereco_imovel }
-  "validacoes": { "cpf_cnpj_valido":true, "titular_bate_documento":true,
-                "campos_faltantes":[] }
+                "energia_contratada_kwh_ano":null,   // auto = consumo_medio_kwh × 12
+                "numero_contrato":null },            // origem: Auribase (AEnn)
+  "aluguel_imovel": {          // achatado; flag copiar_endereco espelha o endereço do titular
+    "valor_mensal": null, "prazo_meses": null, "data_inicio": "DD/MM/AAAA",
+    "copiar_endereco": false,
+    "logradouro":"", "numero":"", "complemento":"", "bairro":"",
+    "municipio":"", "uf":"", "cep":""
+  },
+  "validacoes": { "campos_faltantes":[], "revisado": false }
 }
 ```
+
+Obrigatórios (`OBRIG_COMUM/PF/PJ/ALUGUEL` em `aquisicao.js`) viram badge **"falta"** na Revisão.
+`validarRegistro` exige `tipo_pessoa` presente + `titular.cpf_cnpj` válido; pode-se gerar contrato
+mesmo com lacunas (campos vazios saem em branco no `.docx`).
 
 ## Melhorias futuras nos modelos de contrato (a fazer depois)
 

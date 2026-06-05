@@ -1,5 +1,14 @@
 # Auri Docs — Extração no App + Modelo de Papéis (Spec)
 
+> ⚠️ **STATUS: ROADMAP — NÃO IMPLEMENTADO (jun/2026).** Este spec descreve uma evolução
+> que **não foi construída**. A implementação atual seguiu um caminho mais leve: manteve o
+> **schema v1.1** (`titular`/`endereco`) e adicionou apenas um bloco **`contato`**
+> (`usar_titular` / `usar_representante`) e o cadastro **100% manual** na etapa de Revisão
+> (ver `README.md` › "Auri Docs" e `schema-extracao.md`). O modelo "por papéis"
+> (`conta` × `contratante` × `contato` com flags de fonte) e a ponte `/api/extrair-docs`
+> permanecem como **itens de roadmap a reanalisar** antes de qualquer retomada. Mantido aqui
+> como referência de desenho.
+
 > Evolução da esteira de aquisição: (A) disparar a extração de dentro do App e
 > (B) separar os papéis do contrato (conta × contratante × contato) cobrindo os
 > casos reais de documentos. Base: schema v1.1 já em produção na branch `feature/auri-docs`.

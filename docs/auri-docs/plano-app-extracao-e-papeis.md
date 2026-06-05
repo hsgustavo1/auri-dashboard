@@ -1,5 +1,12 @@
 # Auri Docs — Extração no App + Modelo de Papéis (Plano)
 
+> ⚠️ **STATUS: ROADMAP — NÃO EXECUTADO (jun/2026).** Este plano de implementação corresponde
+> ao spec `spec-app-extracao-e-papeis.md`, que **não foi construído**. A esteira atual usa o
+> **schema v1.1 + bloco `contato`** e cadastro manual (ver `README.md` › "Auri Docs"). As
+> tasks abaixo (helpers de papéis, `normalizarRegistro`, validação v1.2, ponte
+> `/api/extrair-docs`) ficam como **backlog a reanalisar** no roadmap do projeto. Não tratar
+> como pendência ativa.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`).
 
 **Goal:** Migrar a esteira para o schema v1.2 (papéis Conta/Contratante/Representante/Contato com flags) e permitir disparar a extração de dentro do App via ponte local.
