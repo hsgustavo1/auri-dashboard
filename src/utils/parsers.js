@@ -68,9 +68,10 @@ export function parseFatAuri(text) {
     if (!uc || !mes) return;
     if (!data[uc]) data[uc] = {};
     data[uc][mes] = {
-      consumo:     parseBR(r["Consumo"]),
-      saldo:       parseBR(r["Saldo de Créditos"]),
-      faturaAuri:  parseBR(r["Fatura Auri (R$)"]) || 0,
+      consumo:        parseBR(r["Consumo"]),
+      simultaneidade: parseBR(r["Simultaneidade (kWh)"]) || 0,
+      saldo:          parseBR(r["Saldo de Créditos"]),
+      faturaAuri:     parseBR(r["Fatura Auri (R$)"]) || 0,
     };
   });
   return data;

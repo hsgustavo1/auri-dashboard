@@ -10,6 +10,8 @@ import {
   carregamentoUG,
   capacidadeEfetivaUG,
   projetarHorizonte,
+  rsPorKwhGlobal12m,
+  coletarInadimplencia,
 } from "../../utils/business";
 import { Edit3, RotateCcw } from "lucide-react";
 import { UG_NOMES } from "../../config";
@@ -19,6 +21,12 @@ import FormularioRateio from "../../components/FormularioRateio";
 function fmtBRL(v) {
   if (v == null) return "—";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+// Versão compacta sem centavos — para KPIs com valores grandes.
+function fmtBRL0(v) {
+  if (v == null) return "—";
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 0, maximumFractionDigits: 0 });
 }
 
 // Overrides manuais de rateio (Comparativo), persistidos no navegador.
@@ -459,7 +467,8 @@ function montarChartData(cliente, ug, planoGlobal) {
 }
 
 // ─── DetalheCliente (modal) ───────────────────────────────────
-function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
+function DetalheCliente({ cliente, ugsValidadas, planoGlobal, estoque12m, onClose }) {
+  const [mostrarFormulaEstoque, setMostrarFormulaEstoque] = useState(false);
   if (!cliente) return null;
   const ug = ugsValidadas?.find(u => u.nome === cliente.ug) || null;
   const chartData = montarChartData(cliente, ug, planoGlobal);
@@ -500,8 +509,10 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
             ))}
           </div>
           {cliente.financeiro?.temDados && (() => {
-            const totalKwh = (cliente.consumoArr || []).reduce((s, v) => s + (v != null ? v : 0), 0);
-            const rsPorKwh = totalKwh > 0 ? cliente.financeiro.ltv / totalKwh : null;
+            // R$/kWh vida-toda: fonte única em business.js (consumo + simultaneidade,
+            // com fallback de kWh legado). Mesma construção usada pela lista no período completo.
+            const totalKwh = cliente.financeiro.consumoRealKwh ?? 0;
+            const rsPorKwh = cliente.financeiro.rsPorKwh ?? null;
             return (
               <div className="border border-stone-200 p-5 mb-5">
                 <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-4">Financeiro — LTV</h3>
@@ -533,6 +544,40 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, onClose }) {
                     <div className="text-[10px] font-mono text-stone-500 mt-0.5">{totalKwh > 0 ? `${totalKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh` : ""}</div>
                     <div className="text-[10px] font-mono text-stone-400">histórico completo</div>
                   </div>
+                  {/* R$ estocado: saldo (pulmão) valorado pelo R$/kWh global dos últ. 12m */}
+                  {(() => {
+                    const rs = estoque12m?.rsPorKwh;
+                    const saldoKwh = cliente.saldo || 0;
+                    const estocado = rs != null ? rs * saldoKwh : null;
+                    const corE = estocado == null ? "#a89e89" : estocado >= 0 ? "#2f7a52" : "#a8482a";
+                    return (
+                      <div className="border-l-2 pl-3" style={{ borderColor: corE }}>
+                        <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">R$ estocado (saldo)</div>
+                        <div className="text-xl font-mono font-bold" style={{ color: corE }}>
+                          {estocado != null ? fmtBRL(estocado) : "—"}
+                        </div>
+                        <div className="text-[10px] font-mono text-stone-500 mt-0.5">{saldoKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh em saldo</div>
+                        <div className="text-[10px] font-mono text-stone-400">R$/kWh global 12m</div>
+                      </div>
+                    );
+                  })()}
+                </div>
+                <div className="mt-3">
+                  <button
+                    onClick={() => setMostrarFormulaEstoque(v => !v)}
+                    className="text-[10px] uppercase tracking-[0.15em] text-stone-500 hover:text-stone-700 transition-colors"
+                  >
+                    {mostrarFormulaEstoque ? "▲ ocultar cálculo do R$ estocado" : "▼ como o R$ estocado é calculado?"}
+                  </button>
+                  {mostrarFormulaEstoque && (
+                    <p className="mt-2 text-[11px] text-stone-600 leading-relaxed bg-bone/60 border border-stone-200 px-3 py-2">
+                      <span className="font-mono">R$ estocado = R$/kWh global (últ. 12m) × saldo do cliente (kWh)</span><br />
+                      = <span className="font-mono text-stone-700">{estoque12m?.rsPorKwh != null ? `R$ ${estoque12m.rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh` : "—"}</span>
+                      {" × "}
+                      <span className="font-mono text-stone-700">{(cliente.saldo || 0).toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh</span>.
+                      {" "}O R$/kWh global é a margem (LTV) da empresa ÷ kWh real (consumo + simultaneidade) nos últimos 12 meses{estoque12m?.mesIni ? ` (${estoque12m.mesIni}–${estoque12m.mesFim})` : ""}.
+                    </p>
+                  )}
                 </div>
               </div>
             );
@@ -1911,7 +1956,8 @@ function subMeses(mesAno, n) {
   return `${String(m).padStart(2, '0')}/${y}`;
 }
 
-function TelaLTV({ clientes, onClickCliente }) {
+function TelaLTV({ clientes, onClickCliente, estoque12m }) {
+  const [mostrarFormulaEstoque, setMostrarFormulaEstoque] = useState(false);
   // Coleta todos os Mês/Ano únicos presentes nas transações de qualquer cliente
   const mesOptions = useMemo(() => {
     const set = new Set();
@@ -2037,12 +2083,14 @@ function TelaLTV({ clientes, onClickCliente }) {
         }
       });
 
-      // kWh consumido pelo cliente no período (consumoArr alinhado com c.meses)
+      // kWh efetivamente consumido no período (consumo + simultaneidade), alinhado com c.meses.
+      // Denominador do R$/kWh — inclui simultaneidade, ao contrário do CMC.
+      const consumoArrRsKwh = c.consumoEntregueArr || c.consumoArr;
       const mesesComConsumoArr = new Set();
       pc.consumoKwh = (c.meses || []).reduce((sum, mes, i) => {
         if (!dentroDoPeriodo(mes)) return sum;
         if (filtroUG !== "todas" && c.ug !== filtroUG) return sum;
-        const v = c.consumoArr?.[i];
+        const v = consumoArrRsKwh?.[i];
         if (v != null) mesesComConsumoArr.add(mes);
         return sum + (v != null ? v : 0);
       }, 0);
@@ -2058,7 +2106,7 @@ function TelaLTV({ clientes, onClickCliente }) {
     });
 
     const dadosGrafico = Object.values(porMes).sort((a, b) => comparaMes(a.mes, b.mes));
-    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", margem: "margemPct", ratio: "ratio", rspkwh: "rsPorKwh" };
+    const SORT_KEY = { receita: "receitaTotal", despesa: "despesaTotal", ltv: "ltv", margem: "margemPct", ratio: "ratio", rspkwh: "rsPorKwh", estocado: "estocado" };
     const dadosTabelaOrdenados = Object.values(porCliente)
       .map(r => ({
         ...r,
@@ -2067,6 +2115,8 @@ function TelaLTV({ clientes, onClickCliente }) {
         ratio:    r.despesaTotal > 0 ? r.receitaTotal / r.despesaTotal : null,
         margemPct: r.receitaTotal > 0 ? ((r.receitaTotal - r.despesaTotal) / r.receitaTotal) * 100 : null,
         rsPorKwh: r.consumoKwh > 0 ? (r.receitaTotal - r.despesaTotal) / r.consumoKwh : null,
+        // R$ estocado = R$/kWh global (últ. 12m) × saldo (kWh) do cliente. Não depende do período.
+        estocado: estoque12m?.rsPorKwh != null ? estoque12m.rsPorKwh * (r.cliente.saldo || 0) : null,
       }))
       .sort((a, b) => {
         const mul = ord.dir === "desc" ? -1 : 1;
@@ -2088,15 +2138,17 @@ function TelaLTV({ clientes, onClickCliente }) {
       acc.despesa   += r.despesaTotal;
       acc.ltv       += r.ltv;
       acc.consumoKwh += r.consumoKwh || 0;
+      acc.estocado  += r.estocado || 0;
+      acc.saldoKwh  += r.cliente.saldo || 0;
       if (r.ltv < 0) { acc.nVermelho += 1; acc.sangrando += r.ltv; }
       return acc;
-    }, { receita: 0, despesa: 0, ltv: 0, consumoKwh: 0, nVermelho: 0, sangrando: 0 });
+    }, { receita: 0, despesa: 0, ltv: 0, consumoKwh: 0, estocado: 0, saldoKwh: 0, nVermelho: 0, sangrando: 0 });
     totais.ratio    = totais.despesa   > 0 ? totais.receita    / totais.despesa    : null;
     totais.margemPct = totais.receita  > 0 ? (totais.ltv / totais.receita) * 100 : null;
     totais.rsPorKwh = totais.consumoKwh > 0 ? totais.ltv / totais.consumoKwh : null;
 
     return { dadosGrafico, dadosTabela, dadosTabelaAtivos, totais };
-  }, [clientes, periodoInicio, periodoFim, filtroUG, ord, filtroAtividade]);
+  }, [clientes, periodoInicio, periodoFim, filtroUG, ord, filtroAtividade, estoque12m]);
 
   const ugNomes = useMemo(() => {
     const set = new Set();
@@ -2198,12 +2250,12 @@ function TelaLTV({ clientes, onClickCliente }) {
       </div>
 
       {/* Painel global da empresa */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-3 mb-3">
         {[
-          { label: "Receita total", valor: fmtBRL(totais.receita), cor: "#2f7a52" },
-          { label: "Despesa total", valor: fmtBRL(totais.despesa), cor: "#a8482a" },
+          { label: "Receita total", valor: fmtBRL0(totais.receita), cor: "#2f7a52" },
+          { label: "Despesa total", valor: fmtBRL0(totais.despesa), cor: "#a8482a" },
           {
-            label: "Margem (LTV)", valor: fmtBRL(totais.ltv),
+            label: "Margem (LTV)", valor: fmtBRL0(totais.ltv),
             cor: totais.ltv >= 0 ? "#2f7a52" : "#a8482a",
             sub: totais.margemPct != null
               ? `${totais.margemPct >= 0 ? "+" : ""}${totais.margemPct.toFixed(1).replace(".", ",")}% da receita`
@@ -2220,22 +2272,47 @@ function TelaLTV({ clientes, onClickCliente }) {
               : null,
           },
           {
+            label: "R$ estocado (saldo)",
+            valor: estoque12m?.rsPorKwh != null ? fmtBRL0(totais.estocado) : "—",
+            cor: estoque12m?.rsPorKwh == null ? "#a89e89" : totais.estocado >= 0 ? "#2f7a52" : "#a8482a",
+            sub: `${totais.saldoKwh.toLocaleString("pt-BR", { maximumFractionDigits: 0 })} kWh em saldo`,
+          },
+          {
             label: "No vermelho", valor: String(totais.nVermelho),
             cor: totais.nVermelho > 0 ? "#a8482a" : "#2f7a52",
             sub: `de ${dadosTabelaAtivos.length} ativos`,
           },
           {
-            label: "R$ sangrando", valor: fmtBRL(totais.sangrando),
+            label: "R$ sangrando", valor: fmtBRL0(totais.sangrando),
             cor: totais.sangrando < 0 ? "#a8482a" : "#2f7a52",
             sub: "soma das margens < 0",
           },
         ].map(({ label, valor, cor, sub }) => (
-          <div key={label} className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4">
-            <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
-            <div className="text-2xl font-extrabold tracking-tight font-mono" style={{ color: cor }}>{valor}</div>
-            {sub && <div className="text-[10px] text-stone-500 font-mono mt-1">{sub}</div>}
+          <div key={label} className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-4 py-3.5 flex flex-col">
+            <div className="text-[9px] uppercase tracking-[0.16em] text-stone-500 mb-1.5 font-mono leading-tight min-h-[1.6em]">{label}</div>
+            <div className="text-xl font-bold tracking-tight font-mono whitespace-nowrap tabular-nums leading-none" style={{ color: cor }}>{valor}</div>
+            {sub && <div className="text-[10px] text-stone-500 font-mono mt-1.5 leading-tight">{sub}</div>}
           </div>
         ))}
+      </div>
+
+      {/* Toggle: como o R$ estocado é calculado */}
+      <div className="mb-6">
+        <button
+          onClick={() => setMostrarFormulaEstoque(v => !v)}
+          className="text-[10px] uppercase tracking-[0.15em] text-stone-500 hover:text-stone-700 transition-colors"
+        >
+          {mostrarFormulaEstoque ? "▲ ocultar cálculo do R$ estocado" : "▼ como o R$ estocado (saldo) é calculado?"}
+        </button>
+        {mostrarFormulaEstoque && (
+          <p className="mt-2 text-[11px] text-stone-600 leading-relaxed bg-bone/60 border border-stone-200 px-3 py-2 max-w-3xl">
+            <span className="font-mono">R$ estocado = R$/kWh global (últ. 12m) × saldo do cliente (kWh)</span><br />
+            R$/kWh global ={" "}
+            <span className="font-mono text-stone-700">{estoque12m?.rsPorKwh != null ? `R$ ${estoque12m.rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh` : "—"}</span>
+            {estoque12m?.mesIni ? ` (${estoque12m.mesIni}–${estoque12m.mesFim})` : ""} — margem (LTV) da empresa ÷ kWh real (consumo + simultaneidade) nos últimos 12 meses.
+            {" "}Valora o saldo "estocado" como pulmão de cada cliente. <span className="text-stone-400">Independe do filtro de período.</span>
+          </p>
+        )}
       </div>
 
       {/* Atalhos de período */}
@@ -2457,6 +2534,7 @@ function TelaLTV({ clientes, onClickCliente }) {
                   ["margem",  "Margem %",     "right"],
                   ["ratio",   "Rec/Desp",     "right"],
                   ["rspkwh",  "R$/kWh",       "right"],
+                  ["estocado","R$ estocado",  "right"],
                 ].map(([sortCol, label, align], i) => {
                   const ativo = sortCol && ord.col === sortCol;
                   const seta = ativo ? (ord.dir === "desc" ? " ↓" : " ↑") : (sortCol ? " ↕" : "");
@@ -2479,10 +2557,11 @@ function TelaLTV({ clientes, onClickCliente }) {
               </tr>
             </thead>
             <tbody>
-              {linhasTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, margemPct, ratio, rsPorKwh, consumoKwh }, i) => {
+              {linhasTabela.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv, margemPct, ratio, rsPorKwh, consumoKwh, estocado }, i) => {
                 const ratioCor  = ratio    == null ? "#a89e89" : ratio >= 2 ? "#2f7a52" : ratio >= 1 ? "#c98a1f" : "#a8482a";
                 const margemCor = margemPct == null ? "#a89e89" : margemPct >= 50 ? "#2f7a52" : margemPct >= 0 ? "#c98a1f" : "#a8482a";
                 const kwCor     = rsPorKwh == null ? "#a89e89" : rsPorKwh >= 0 ? "#2f6690" : "#a8482a";
+                const estCor    = estocado == null ? "#a89e89" : estocado >= 0 ? "#2f7a52" : "#a8482a";
                 return (
                   <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"} ${cliente.inativo ? "opacity-60" : ""}`}>
                     <td className="px-2 py-2.5">
@@ -2517,6 +2596,9 @@ function TelaLTV({ clientes, onClickCliente }) {
                         ? `R$ ${rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
                         : "—"}
                     </td>
+                    <td className="px-1.5 py-2.5 text-right font-mono text-xs font-bold whitespace-nowrap" style={{ color: estCor }}>
+                      {estocado != null ? fmtBRL(estocado) : "—"}
+                    </td>
                   </tr>
                 );
               })}
@@ -2541,6 +2623,9 @@ function TelaLTV({ clientes, onClickCliente }) {
                       ? `R$ ${totais.rsPorKwh.toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/kWh`
                       : "—"}
                   </td>
+                  <td className="px-1.5 py-2.5 text-xs text-right font-mono font-bold" style={{ color: estoque12m?.rsPorKwh == null ? "#a89e89" : totais.estocado >= 0 ? "#2f7a52" : "#a8482a" }}>
+                    {estoque12m?.rsPorKwh != null ? fmtBRL(totais.estocado) : "—"}
+                  </td>
                 </tr>
               </tfoot>
             )}
@@ -2552,20 +2637,6 @@ function TelaLTV({ clientes, onClickCliente }) {
 }
 
 // ─── Helpers de data para Inadimplência ──────────────────────
-function parseBRDate(str) {
-  if (!str) return null;
-  const parts = str.split("/");
-  if (parts.length !== 3) return null;
-  const [d, m, y] = parts.map(Number);
-  if (!d || !m || !y || y < 2000) return null;
-  return new Date(y, m - 1, d);
-}
-function hoje() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
-function diasAtraso(dataVenc) {
-  if (!dataVenc) return null;
-  const diff = hoje() - dataVenc;
-  return diff > 0 ? Math.floor(diff / 86400000) : 0;
-}
 function fmtData(str) {
   if (!str) return "—";
   // já está em DD/MM/YYYY; retorna como está
@@ -2575,60 +2646,49 @@ function fmtData(str) {
 // ─── TelaInadimplencia ───────────────────────────────────────
 function TelaInadimplencia({ clientes, onClickCliente }) {
   const [ord, setOrd] = useState({ secao: null, col: "dias", dir: "desc" });
+  const [expandedUCs, setExpandedUCs] = useState({});
   const toggleOrd = (secao, col) =>
     setOrd(prev => prev.secao === secao && prev.col === col
       ? { secao, col, dir: prev.dir === "desc" ? "asc" : "desc" }
       : { secao, col, dir: "desc" });
-  const hoje_ = hoje();
+  const toggleUC = (key) =>
+    setExpandedUCs(prev => ({ ...prev, [key]: !prev[key] }));
 
-  // Coleta transações RD de todos os clientes nas três categorias
-  const receitasAtraso = [];
-  const despesasNaoPagas = [];
-  const debitoSemConfirmacao = [];
+  // Classificação compartilhada com o snapshot de indicadores (anti-drift).
+  const { receitasAtraso, despesasNaoPagas, debitoSemConfirmacao } = coletarInadimplencia(clientes);
 
-  clientes.forEach(c => {
-    if (!c.financeiro?.temDados) return;
-    (c.financeiro.transacoes || []).forEach(t => {
-      if (t.fonte !== "rd") return; // só RD Equatorial
-      const venc = parseBRDate(t.vencimento);
+  function corDias(dias) {
+    return dias == null ? "#a89e89" : dias > 30 ? "#a8482a" : dias > 7 ? "#c98a1f" : "#6b6357";
+  }
 
-      if (t.tipo === "Receita") {
-        // Receitas com status A_receber/A receber e vencimento passado
-        const statusPendente = /a.?receber/i.test(t.status);
-        if (statusPendente && venc && venc < hoje_) {
-          receitasAtraso.push({ ...t, cliente: c, vencDate: venc,
-            dias: diasAtraso(venc) });
-        }
-      } else if (t.tipo === "Despesa") {
-        const efetivada = !!(t.efetivacao && t.efetivacao.trim());
-        if (t.debitoAutomatico) {
-          // Débito automático: alerta se vencimento passou e sem efetivação
-          if (!efetivada && venc && venc < hoje_) {
-            debitoSemConfirmacao.push({ ...t, cliente: c, vencDate: venc,
-              dias: diasAtraso(venc) });
-          }
-        } else {
-          // Não é débito automático: em aberto e sem efetivação
-          const statusAberto = /em.?aberto|a.?pagar|pendente/i.test(t.status)
-            || (t.status !== "Pago" && !efetivada);
-          if (statusAberto && !efetivada) {
-            despesasNaoPagas.push({ ...t, cliente: c, vencDate: venc,
-              dias: venc ? diasAtraso(venc) : null });
-          }
-        }
-      }
+  // Agrupa lista de transações por UC
+  function agruparPorUC(lista) {
+    const map = new Map();
+    lista.forEach(t => {
+      const key = t.uc || `_${t.cliente.nome}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(t);
     });
-  });
+    return Array.from(map.entries()).map(([uc, txs]) => ({ uc, txs }));
+  }
 
-  // Ordena cada seção
-  function ordenar(lista, secao) {
-    if (ord.secao !== secao) return lista;
+  // Ordena grupos pelo campo selecionado (usando agregados quando multi-fatura)
+  function ordenarGrupos(grupos, secao) {
+    if (ord.secao !== secao) return grupos;
     const mul = ord.dir === "desc" ? -1 : 1;
-    return [...lista].sort((a, b) => {
-      if (ord.col === "nome")  return mul * a.cliente.nome.localeCompare(b.cliente.nome);
-      if (ord.col === "valor") return mul * (b.valor - a.valor);
-      if (ord.col === "venc")  return mul * ((b.vencDate?.getTime() ?? 0) - (a.vencDate?.getTime() ?? 0));
-      if (ord.col === "dias")  return mul * ((b.dias ?? -1) - (a.dias ?? -1));
+    return [...grupos].sort((a, b) => {
+      if (ord.col === "nome") return mul * a.txs[0].cliente.nome.localeCompare(b.txs[0].cliente.nome);
+      if (ord.col === "valor") {
+        const sA = a.txs.reduce((s, t) => s + t.valor, 0);
+        const sB = b.txs.reduce((s, t) => s + t.valor, 0);
+        return mul * (sB - sA);
+      }
+      if (ord.col === "venc") return mul * ((b.txs[0].vencDate?.getTime() ?? 0) - (a.txs[0].vencDate?.getTime() ?? 0));
+      if (ord.col === "dias") {
+        const mA = Math.max(...a.txs.map(t => t.dias ?? -1));
+        const mB = Math.max(...b.txs.map(t => t.dias ?? -1));
+        return mul * (mB - mA);
+      }
       return 0;
     });
   }
@@ -2651,14 +2711,11 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
   }
 
   function SecaoVazia({ msg }) {
-    return (
-      <tr><td colSpan={6} className="px-4 py-6 text-center text-stone-500 text-sm">{msg}</td></tr>
-    );
+    return <tr><td colSpan={5} className="px-4 py-6 text-center text-stone-500 text-sm">{msg}</td></tr>;
   }
 
-  function LinhaTransacao({ t, corDias, colunaExtra }) {
-    const dias = t.dias;
-    const corD = dias == null ? "#a89e89" : dias > 30 ? "#a8482a" : dias > 7 ? "#c98a1f" : "#6b6357";
+  // Linha normal (UC com uma única fatura)
+  function LinhaSimples({ t }) {
     return (
       <tr className="border-b border-stone-200/70 hover:bg-bone/70 transition-colors">
         <td className="px-3 py-2 text-sm">
@@ -2669,23 +2726,91 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
         <td className="px-3 py-2 text-xs text-stone-600">{t.mes}</td>
         <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-stone-800">{fmtBRL(t.valor)}</td>
         <td className="px-3 py-2 text-xs text-stone-600 whitespace-nowrap">{fmtData(t.vencimento)}</td>
-        <td className="px-3 py-2 text-right font-mono text-xs" style={{ color: corD }}>
-          {dias != null ? `${dias}d` : "—"}
+        <td className="px-3 py-2 text-right font-mono text-xs" style={{ color: corDias(t.dias) }}>
+          {t.dias != null ? `${t.dias}d` : "—"}
         </td>
-        {colunaExtra && <td className="px-3 py-2">{colunaExtra(t)}</td>}
       </tr>
     );
   }
 
-  function TotalRow({ lista, colSpan = 5 }) {
+  // Sub-linha expandida (recuada, mês, valor, vencimento, atraso)
+  function LinhaSubItem({ t }) {
+    return (
+      <tr className="border-b border-stone-100 bg-stone-50/60 hover:bg-stone-50 transition-colors">
+        <td className="px-3 py-1.5 pl-8 text-[10px] text-stone-300">└</td>
+        <td className="px-3 py-1.5 text-xs text-stone-600">{t.mes}</td>
+        <td className="px-3 py-1.5 text-right font-mono text-xs font-semibold text-stone-700">{fmtBRL(t.valor)}</td>
+        <td className="px-3 py-1.5 text-xs text-stone-500 whitespace-nowrap">{fmtData(t.vencimento)}</td>
+        <td className="px-3 py-1.5 text-right font-mono text-xs" style={{ color: corDias(t.dias) }}>
+          {t.dias != null ? `${t.dias}d` : "—"}
+        </td>
+      </tr>
+    );
+  }
+
+  // Linha de grupo (UC com múltiplas faturas) — clicável para expandir
+  function LinhaGrupo({ grupo, secaoKey }) {
+    const { uc, txs } = grupo;
+    const expandKey = `${secaoKey}-${uc}`;
+    const isExpanded = !!expandedUCs[expandKey];
+    const totalGrupo = txs.reduce((s, t) => s + t.valor, 0);
+    const maxDias = Math.max(...txs.map(t => t.dias ?? -1));
+    const maxDiasValido = maxDias < 0 ? null : maxDias;
+
+    return (
+      <>
+        <tr
+          className="border-b border-stone-200/70 cursor-pointer hover:bg-amber-50/40 transition-colors select-none"
+          onClick={() => toggleUC(expandKey)}
+        >
+          <td className="px-3 py-2 text-sm">
+            <button
+              onClick={(e) => { e.stopPropagation(); onClickCliente(txs[0].cliente); }}
+              className="text-stone-700 hover:text-sun-600 text-left truncate max-w-[160px] block"
+            >{txs[0].cliente.nome}</button>
+            <div className="text-[10px] font-mono text-stone-400">{uc}</div>
+          </td>
+          <td className="px-3 py-2 text-xs">
+            <span className="text-stone-300 mr-1 text-[9px]">{isExpanded ? "▲" : "▼"}</span>
+            <span className="font-semibold text-stone-700">{txs.length}</span>
+            <span className="text-stone-400"> faturas em aberto</span>
+          </td>
+          <td className="px-3 py-2 text-right font-mono text-xs font-bold text-stone-800">{fmtBRL(totalGrupo)}</td>
+          <td className="px-3 py-2" />
+          <td className="px-3 py-2 text-right font-mono text-xs" style={{ color: corDias(maxDiasValido) }}>
+            {maxDiasValido != null ? `${maxDiasValido}d` : "—"}
+          </td>
+        </tr>
+        {isExpanded && txs.map((t, i) => <LinhaSubItem key={i} t={t} />)}
+      </>
+    );
+  }
+
+  function TotalRow({ lista }) {
     if (lista.length <= 1) return null;
     const total = lista.reduce((s, t) => s + t.valor, 0);
     return (
       <tr className="bg-bone border-t border-stone-300">
         <td colSpan={2} className="px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600">{lista.length} ocorrências</td>
         <td className="px-3 py-2 text-right font-mono text-xs font-bold text-stone-800">{fmtBRL(total)}</td>
-        <td colSpan={colSpan - 3} />
+        <td colSpan={2} />
       </tr>
+    );
+  }
+
+  function Tbody({ lista, secaoKey, msgVazia }) {
+    const grupos = ordenarGrupos(agruparPorUC(lista), secaoKey);
+    return (
+      <tbody>
+        {lista.length === 0
+          ? <SecaoVazia msg={msgVazia} />
+          : grupos.map((g, i) =>
+              g.txs.length === 1
+                ? <LinhaSimples key={`${g.uc}-${i}`} t={g.txs[0]} />
+                : <LinhaGrupo key={`${g.uc}-${i}`} grupo={g} secaoKey={secaoKey} />
+            )}
+        <TotalRow lista={lista} />
+      </tbody>
     );
   }
 
@@ -2711,8 +2836,8 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
           ].map(([l, n, v, cor]) => (
             <div key={l} className="border border-stone-200 bg-white shadow-auri-sm p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{l}</div>
-              <div className="text-2xl font-mono font-bold" style={{ color: cor }}>{n}</div>
-              <div className="text-xs font-mono text-stone-600 mt-1">{fmtBRL(v)}</div>
+              <div className="text-2xl font-mono font-bold" style={{ color: cor }}>{fmtBRL(v)}</div>
+              <div className="text-xs font-mono text-stone-500 mt-1">{n} ocorrência{n !== 1 ? "s" : ""}</div>
             </div>
           ))}
         </div>
@@ -2733,14 +2858,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
               <Th secao="rec" col="venc">Vencimento</Th>
               <Th secao="rec" col="dias" align="right">Atraso</Th>
             </tr></thead>
-            <tbody>
-              {receitasAtraso.length === 0
-                ? <SecaoVazia msg="Nenhuma receita em atraso identificada." />
-                : ordenar(receitasAtraso, "rec").map((t, i) => (
-                    <LinhaTransacao key={i} t={t} />
-                  ))}
-              <TotalRow lista={receitasAtraso} />
-            </tbody>
+            <Tbody lista={receitasAtraso} secaoKey="rec" msgVazia="Nenhuma receita em atraso identificada." />
           </table>
         </div>
       </div>
@@ -2760,14 +2878,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
               <Th secao="desp" col="venc">Vencimento</Th>
               <Th secao="desp" col="dias" align="right">Atraso</Th>
             </tr></thead>
-            <tbody>
-              {despesasNaoPagas.length === 0
-                ? <SecaoVazia msg="Nenhuma despesa em aberto identificada." />
-                : ordenar(despesasNaoPagas, "desp").map((t, i) => (
-                    <LinhaTransacao key={i} t={t} />
-                  ))}
-              <TotalRow lista={despesasNaoPagas} />
-            </tbody>
+            <Tbody lista={despesasNaoPagas} secaoKey="desp" msgVazia="Nenhuma despesa em aberto identificada." />
           </table>
         </div>
       </div>
@@ -2790,14 +2901,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
               <Th secao="deb" col="venc">Vencimento</Th>
               <Th secao="deb" col="dias" align="right">Dias s/ confirm.</Th>
             </tr></thead>
-            <tbody>
-              {debitoSemConfirmacao.length === 0
-                ? <SecaoVazia msg="Nenhum débito automático sem confirmação." />
-                : ordenar(debitoSemConfirmacao, "deb").map((t, i) => (
-                    <LinhaTransacao key={i} t={t} />
-                  ))}
-              <TotalRow lista={debitoSemConfirmacao} />
-            </tbody>
+            <Tbody lista={debitoSemConfirmacao} secaoKey="deb" msgVazia="Nenhum débito automático sem confirmação." />
           </table>
         </div>
       </div>
@@ -2834,6 +2938,10 @@ export default function PainelModule() {
       travados:   ativos.filter(c => c.travamentoSuspeito).length,
     };
   }, [clientes]);
+
+  // R$/kWh global dos últimos 12 meses — usado para valorar o saldo "estocado".
+  // Referência fixa (independe do filtro de período da aba LTV).
+  const estoque12m = useMemo(() => rsPorKwhGlobal12m(clientes), [clientes]);
 
   const ugDetalhada = ugSel ? ugsValidadas.find(u => u.nome === ugSel) : null;
   const handleVerUG = (nome) => { setUgSel(nome); setAba("ug_detail"); };
@@ -2968,7 +3076,7 @@ export default function PainelModule() {
         )}
 
         {aba === "ltv" && (
-          <TelaLTV clientes={clientes} onClickCliente={setClienteSel} />
+          <TelaLTV clientes={clientes} onClickCliente={setClienteSel} estoque12m={estoque12m} />
         )}
 
         {aba === "inadimplencia" && (
@@ -2988,6 +3096,7 @@ export default function PainelModule() {
           cliente={clienteSel}
           ugsValidadas={ugsValidadas}
           planoGlobal={planoGlobal}
+          estoque12m={estoque12m}
           onClose={() => setClienteSel(null)}
         />
       )}
