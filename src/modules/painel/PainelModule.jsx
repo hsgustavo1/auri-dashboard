@@ -3084,8 +3084,8 @@ export default function PainelModule() {
   };
   const [formularioRateio, setFormularioRateio] = useState(null); // { ug, cenario }
 
-  const { clientes, ugsValidadas, planoGlobal } = data || {
-    clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} },
+  const { clientes, ugsValidadas, planoGlobal, historico } = data || {
+    clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} }, historico: [],
   };
 
   const stats = useMemo(() => {
@@ -3167,6 +3167,7 @@ export default function PainelModule() {
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
             <NavBtn ativo={aba === "ltv"} onClick={() => setAba("ltv")}>LTV</NavBtn>
             <NavBtn ativo={aba === "inadimplencia"} onClick={() => setAba("inadimplencia")}>Inadimplência</NavBtn>
+            <NavBtn ativo={aba === "evolucao"} onClick={() => setAba("evolucao")}>Evolução</NavBtn>
           </div>
         </div>
       </header>
@@ -3244,6 +3245,7 @@ export default function PainelModule() {
         {aba === "inadimplencia" && (
           <TelaInadimplencia clientes={clientes} onClickCliente={setClienteSel} />
         )}
+        {aba === "evolucao" && <TelaEvolucao historico={historico} />}
       </main>
 
       <footer className="border-t border-stone-200 mt-12 py-6">
