@@ -158,6 +158,25 @@ export function parseLegado(text) {
   return transacoes;
 }
 
+// Historico_Indicadores: snapshot mensal gravado pelo pipeline (scripts/snapshot.mjs).
+// Toda coluna é numérica exceto as duas abaixo. Números em formato BR → parseBR.
+const HISTORICO_COLS_TEXTO = new Set(["mes_ref", "registrado_em"]);
+
+export function parseHistorico(text) {
+  if (!text || !text.trim()) return [];
+  const rows = parseCSV(text);
+  return rows
+    .filter(r => r.mes_ref && String(r.mes_ref).trim() !== "")
+    .map(r => {
+      const out = {};
+      Object.keys(r).forEach(k => {
+        out[k] = HISTORICO_COLS_TEXTO.has(k) ? r[k] : parseBR(r[k]);
+      });
+      return out;
+    })
+    .sort((a, b) => String(a.mes_ref).localeCompare(String(b.mes_ref)));
+}
+
 export function parseClientes(text) {
   const rows = parseCSV(text);
   return rows
