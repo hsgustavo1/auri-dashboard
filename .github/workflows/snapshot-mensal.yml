@@ -1,0 +1,43 @@
+name: Snapshot mensal de indicadores
+
+# Registra os indicadores de fechamento na Auribase (aba Historico_Indicadores)
+# reusando a MESMA lógica do dashboard (scripts/snapshot.mjs → computeIndicadores).
+#
+# Pré-requisitos (Settings → Secrets and variables → Actions):
+#   SNAPSHOT_WEBAPP_URL  — URL /exec do Web App do Apps Script (apps-script/Historico.gs)
+#   SNAPSHOT_TOKEN       — mesmo segredo configurado no Script property da Auribase
+
+on:
+  schedule:
+    # 09:00 UTC = 06:00 BRT, no dia 1 de cada mês (registra o mês anterior).
+    - cron: "0 9 1 * *"
+  workflow_dispatch:
+    inputs:
+      mes_ref:
+        description: "Mês de referência YYYY-MM (vazio = mês anterior). Use para disparo manual após o refresh dos dados."
+        required: false
+        default: ""
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Empacotar script (esbuild resolve imports do app)
+        run: npx --yes esbuild scripts/snapshot.mjs --bundle --platform=node --format=esm --outfile=snapshot.bundle.mjs
+
+      - name: Registrar snapshot
+        env:
+          SNAPSHOT_WEBAPP_URL: ${{ secrets.SNAPSHOT_WEBAPP_URL }}
+          SNAPSHOT_TOKEN: ${{ secrets.SNAPSHOT_TOKEN }}
+          SNAPSHOT_MES_REF: ${{ github.event.inputs.mes_ref }}
+        run: node snapshot.bundle.mjs

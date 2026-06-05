@@ -126,7 +126,16 @@ export function buildClientes(scData, fatData, clientesBase) {
     const saldoHist = sc.saldo_historico || {};
     const meses = sc.meses || [];
 
+    // CMC e gráfico de consumo usam SOMENTE o consumo (energia que a unidade
+    // de fato consome após injeção da geradora). A simultaneidade NÃO entra aqui.
     const consumoArr = meses.map(m => fat[m]?.consumo ?? null);
+    // Energia efetivamente consumida pela unidade = consumo + simultaneidade.
+    // Usado apenas como denominador do R$/kWh (não afeta CMC/carregamento/otimizador).
+    const consumoEntregueArr = meses.map(m => {
+      const c = fat[m]?.consumo ?? null;
+      const s = fat[m]?.simultaneidade ?? null;
+      return (c !== null || s !== null) ? (c ?? 0) + (s ?? 0) : null;
+    });
     const saldoArr = meses.map(m => {
       const v = saldoHist[m];
       return (v !== undefined && v !== null) ? v : (fat[m]?.saldo ?? null);
@@ -183,7 +192,7 @@ export function buildClientes(scData, fatData, clientesBase) {
       emRecuperacao,
       pulmaoMeses,
       media_consumo: mediaConsumo,
-      saldo, saldoArr, consumoArr, meses, status,
+      saldo, saldoArr, consumoArr, consumoEntregueArr, meses, status,
       travado: base.inativo ? false : travado,
       ehUCGeradora,
       travamentoSuspeito: !base.inativo && travado && !ehUCGeradora && saldo > OPT_PARAMS.SALDO_TRAVADO_MIN,
@@ -1396,7 +1405,218 @@ export function buildFinanceiro(clientes, transacoes, fatData = {}) {
     f.ltv      = f.receitaTotal - f.despesaTotal;
     f.ltvPago  = f.receitaPago  - f.despesaPago;
     f.temDados = f.receitaTotal > 0 || f.despesaTotal > 0;
+
+    // kWh REAL consumido na vida toda = consumo + simultaneidade (medido),
+    // com fallback para o kWh das transações legadas em meses não cobertos.
+    // Fonte única de verdade do R$/kWh — usada no card do cliente e como base
+    // (no período completo) da lista. Não envolve CMC.
+    const arrReal = c.consumoEntregueArr || c.consumoArr || [];
+    const mesesC = c.meses || [];
+    const cobertos = new Set();
+    let kwhReal = mesesC.reduce((s, m, i) => {
+      const v = arrReal[i];
+      if (v != null) { cobertos.add(m); return s + v; }
+      return s;
+    }, 0);
+    f.transacoes.forEach(t => {
+      if (t.fonte !== "legado" || t.tipo !== "Receita") return;
+      if (cobertos.has(t.mes)) return;
+      if (t.kwh > 0) { kwhReal += t.kwh; cobertos.add(t.mes); }
+    });
+    f.consumoRealKwh = kwhReal;
+    f.rsPorKwh = kwhReal > 0 ? f.ltv / kwhReal : null;
   });
 
   return clientes;
+}
+
+// ─── R$/kWh global por período ───────────────────────────────
+// "MM/YYYY" → número comparável (ano*12 + mês), para janelas de tempo.
+function mesParaNum(s) {
+  const [m, y] = String(s || "").split("/").map(Number);
+  if (!m || !y) return NaN;
+  return y * 12 + (m - 1);
+}
+
+// R$/kWh global da empresa numa janela [mesIni, mesFim] (inclusive, "MM/YYYY").
+// Mesma construção do card/lista: LTV (receita−despesa) ÷ kWh real
+// (consumo + simultaneidade, com fallback de kWh legado). Só clientes ativos.
+export function rsPorKwhGlobalPeriodo(clientes, mesIni, mesFim) {
+  const ini = mesIni ? mesParaNum(mesIni) : -Infinity;
+  const fim = mesFim ? mesParaNum(mesFim) :  Infinity;
+  const dentro = (m) => { const n = mesParaNum(m); return n >= ini && n <= fim; };
+  let ltv = 0, kwh = 0;
+  clientes.forEach(c => {
+    if (c.inativo) return;
+    const f = c.financeiro;
+    if (!f?.temDados) return;
+    (f.transacoes || []).forEach(t => {
+      if (!dentro(t.mes)) return;
+      ltv += t.tipo === "Receita" ? t.valor : -t.valor;
+    });
+    const arr = c.consumoEntregueArr || c.consumoArr || [];
+    const meses = c.meses || [];
+    const cobertos = new Set();
+    meses.forEach((m, i) => {
+      if (!dentro(m)) return;
+      const v = arr[i];
+      if (v != null) { kwh += v; cobertos.add(m); }
+    });
+    (f.transacoes || []).forEach(t => {
+      if (t.fonte !== "legado" || t.tipo !== "Receita") return;
+      if (!dentro(t.mes) || cobertos.has(t.mes)) return;
+      if (t.kwh > 0) { kwh += t.kwh; cobertos.add(t.mes); }
+    });
+  });
+  return { ltv, kwh, rsPorKwh: kwh > 0 ? ltv / kwh : null };
+}
+
+// R$/kWh global dos últimos 12 meses (a partir do mês mais recente das transações).
+// Usado para valorar o saldo "estocado" como pulmão de cada cliente.
+export function rsPorKwhGlobal12m(clientes) {
+  let maxN = -Infinity, maxMes = null;
+  clientes.forEach(c => (c.financeiro?.transacoes || []).forEach(t => {
+    const n = mesParaNum(t.mes);
+    if (n > maxN) { maxN = n; maxMes = t.mes; }
+  }));
+  if (maxMes == null) return { ltv: 0, kwh: 0, rsPorKwh: null, mesIni: null, mesFim: null };
+  const [m, y] = maxMes.split("/").map(Number);
+  let im = m - 11, iy = y;
+  while (im <= 0) { im += 12; iy -= 1; }
+  const mesIni = `${String(im).padStart(2, "0")}/${iy}`;
+  return { ...rsPorKwhGlobalPeriodo(clientes, mesIni, maxMes), mesIni, mesFim: maxMes };
+}
+
+// ─── Inadimplência (coleta/classificação) ────────────────────
+// Helpers de data (puros). "DD/MM/YYYY" → Date; hoje à meia-noite; dias em atraso.
+function parseDataBR(str) {
+  if (!str) return null;
+  const parts = str.split("/");
+  if (parts.length !== 3) return null;
+  const [d, m, y] = parts.map(Number);
+  if (!d || !m || !y || y < 2000) return null;
+  return new Date(y, m - 1, d);
+}
+function hojeZerado() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function diasEmAtraso(dataVenc, ref = hojeZerado()) {
+  if (!dataVenc) return null;
+  const diff = ref - dataVenc;
+  return diff > 0 ? Math.floor(diff / 86400000) : 0;
+}
+
+// Classifica as transações RD de todos os clientes em três categorias de
+// inadimplência. Fonte única usada pela aba Inadimplência e pelo snapshot.
+// Cada item: { ...transacao, cliente, vencDate, dias }.
+export function coletarInadimplencia(clientes, ref = hojeZerado()) {
+  const receitasAtraso = [];
+  const despesasNaoPagas = [];
+  const debitoSemConfirmacao = [];
+
+  clientes.forEach(c => {
+    if (!c.financeiro?.temDados) return;
+    (c.financeiro.transacoes || []).forEach(t => {
+      if (t.fonte !== "rd") return;
+      const venc = parseDataBR(t.vencimento);
+
+      if (t.tipo === "Receita") {
+        const statusPendente = /a.?receber/i.test(t.status);
+        if (statusPendente && venc && venc < ref) {
+          receitasAtraso.push({ ...t, cliente: c, vencDate: venc, dias: diasEmAtraso(venc, ref) });
+        }
+      } else if (t.tipo === "Despesa") {
+        const efetivada = !!(t.efetivacao && t.efetivacao.trim());
+        if (t.debitoAutomatico) {
+          if (!efetivada && venc && venc < ref) {
+            debitoSemConfirmacao.push({ ...t, cliente: c, vencDate: venc, dias: diasEmAtraso(venc, ref) });
+          }
+        } else {
+          const statusAberto = /em.?aberto|a.?pagar|pendente/i.test(t.status)
+            || (t.status !== "Pago" && !efetivada);
+          if (statusAberto && !efetivada) {
+            despesasNaoPagas.push({ ...t, cliente: c, vencDate: venc,
+              dias: venc ? diasEmAtraso(venc, ref) : null });
+          }
+        }
+      }
+    });
+  });
+
+  return { receitasAtraso, despesasNaoPagas, debitoSemConfirmacao };
+}
+
+// ─── computeIndicadores ──────────────────────────────────────
+// Snapshot plano dos indicadores de FECHAMENTO (estado atual + vida-toda +
+// trailing-12m). Puro e sem dependência de UI — reusado pelo dashboard e pelo
+// script Node de histórico. Reusa rsPorKwhGlobal12m, coletarInadimplencia,
+// carregamentoUG e os mesmos campos de cliente.financeiro/status do app.
+export function computeIndicadores(clientes, ugsValidadas = [], { mesRef = null } = {}) {
+  const ativos   = clientes.filter(c => !c.inativo);
+  const comDados = ativos.filter(c => c.financeiro?.temDados);
+
+  // Financeiro vida-toda (estado acumulado)
+  let receita = 0, despesa = 0, ltv = 0, nVermelho = 0, sangrando = 0, saldoKwh = 0;
+  comDados.forEach(c => {
+    const f = c.financeiro;
+    receita += f.receitaTotal;
+    despesa += f.despesaTotal;
+    ltv     += f.ltv;
+    if (f.ltv < 0) { nVermelho += 1; sangrando += f.ltv; }
+    saldoKwh += c.saldo || 0;
+  });
+  const margemPct = receita > 0 ? (ltv / receita) * 100 : null;
+
+  // R$/kWh global trailing-12m + valor estocado (mesma fórmula da aba LTV)
+  const e12 = rsPorKwhGlobal12m(clientes);
+  const estocado = e12.rsPorKwh != null ? e12.rsPorKwh * saldoKwh : null;
+
+  // Distribuição de status (sobre ativos)
+  const status = { critico: 0, baixo: 0, ideal: 0, alto: 0, excessivo: 0 };
+  ativos.forEach(c => { const n = c.status?.nivel; if (status[n] !== undefined) status[n] += 1; });
+  const semUG    = ativos.filter(c => !c.ug).length;
+  const travados = ativos.filter(c => c.travamentoSuspeito).length;
+
+  // Inadimplência (estado atual)
+  const inad = coletarInadimplencia(clientes);
+  const somaR = arr => arr.reduce((s, t) => s + (t.valor || 0), 0);
+
+  // Carregamento por UG
+  const carreg = {};
+  ugsValidadas.forEach(ug => {
+    const key = `carreg_${String(ug.nome).replace(/\s+/g, "_")}`;
+    carreg[key] = Math.round(carregamentoUG(ug.clientes, ug) * 10) / 10;
+  });
+
+  return {
+    mes_ref: mesRef,
+    registrado_em: new Date().toISOString(),
+    // financeiro
+    receita_total: Math.round(receita * 100) / 100,
+    despesa_total: Math.round(despesa * 100) / 100,
+    ltv: Math.round(ltv * 100) / 100,
+    margem_pct: margemPct != null ? Math.round(margemPct * 10) / 10 : null,
+    rs_kwh_global_12m: e12.rsPorKwh != null ? Math.round(e12.rsPorKwh * 10000) / 10000 : null,
+    consumo_kwh_12m: Math.round(e12.kwh),
+    estocado_total: estocado != null ? Math.round(estocado * 100) / 100 : null,
+    saldo_total_kwh: Math.round(saldoKwh),
+    n_vermelho: nVermelho,
+    r_sangrando: Math.round(sangrando * 100) / 100,
+    // operacional
+    clientes_ativos: ativos.length,
+    n_critico: status.critico,
+    n_baixo: status.baixo,
+    n_ideal: status.ideal,
+    n_alto: status.alto,
+    n_excessivo: status.excessivo,
+    n_sem_ug: semUG,
+    n_travados: travados,
+    // inadimplência
+    inad_receitas_n: inad.receitasAtraso.length,
+    inad_receitas_rs: Math.round(somaR(inad.receitasAtraso) * 100) / 100,
+    inad_despesas_n: inad.despesasNaoPagas.length,
+    inad_despesas_rs: Math.round(somaR(inad.despesasNaoPagas) * 100) / 100,
+    inad_debito_n: inad.debitoSemConfirmacao.length,
+    inad_debito_rs: Math.round(somaR(inad.debitoSemConfirmacao) * 100) / 100,
+    // carregamento por UG
+    ...carreg,
+  };
 }

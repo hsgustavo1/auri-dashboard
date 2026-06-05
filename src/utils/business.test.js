@@ -19,6 +19,8 @@ import {
   diagnosticarUG,
   OPT_PARAMS,
   mergeTransacoes,
+  computeIndicadores,
+  coletarInadimplencia,
 } from "./business.js";
 
 // ─── Helpers de fixture ────────────────────────────────────────────────────
@@ -581,5 +583,107 @@ describe("mergeTransacoes", () => {
   it("funciona com rdEquatorial vazio", () => {
     const result = mergeTransacoes([], legado);
     expect(result).toHaveLength(3);
+  });
+});
+
+// ─── computeIndicadores / coletarInadimplencia (snapshot mensal) ─────────────
+describe("computeIndicadores", () => {
+  // Cliente de fixture com financeiro + transações + consumo já montados.
+  const cliInd = ({ uc, cmc = 0, saldo = 0, ug = null, nivel = "ideal",
+                    travamentoSuspeito = false, inativo = false, temDados = true,
+                    receitaTotal = 0, despesaTotal = 0, transacoes = [],
+                    consumoEntregueArr = [], meses = [] }) => ({
+    uc, nome: uc, cmc, saldo, ug, inativo, travamentoSuspeito,
+    ehUCGeradora: false, rateio_pct: 100,
+    consumoEntregueArr, meses,
+    status: { nivel },
+    financeiro: {
+      temDados, receitaTotal, despesaTotal,
+      ltv: receitaTotal - despesaTotal, transacoes,
+    },
+  });
+
+  // A: saudável, ideal, com UG. B: no vermelho, crítico, sem UG, travado, com
+  // receita em atraso + despesa não paga. C: inativo (deve ser ignorado).
+  const A = cliInd({
+    uc: "A", cmc: 1500, saldo: 1000, ug: "Piloto", nivel: "ideal",
+    receitaTotal: 1200, despesaTotal: 400,
+    consumoEntregueArr: [1600], meses: ["01/2026"],
+    transacoes: [
+      { tipo: "Receita", mes: "01/2026", valor: 1200, fonte: "rd", status: "Recebido", vencimento: "10/01/2026" },
+      { tipo: "Despesa", mes: "01/2026", valor: 400,  fonte: "rd", status: "Pago",     vencimento: "10/01/2026", efetivacao: "12/01/2026" },
+    ],
+  });
+  const B = cliInd({
+    uc: "B", cmc: 400, saldo: 200, ug: null, nivel: "critico", travamentoSuspeito: true,
+    receitaTotal: 300, despesaTotal: 500,
+    consumoEntregueArr: [400], meses: ["01/2026"],
+    transacoes: [
+      { tipo: "Receita", mes: "01/2026", valor: 300, fonte: "rd", status: "A receber",  vencimento: "05/01/2026" },
+      { tipo: "Despesa", mes: "01/2026", valor: 500, fonte: "rd", status: "Em aberto", vencimento: "05/01/2026", efetivacao: "", debitoAutomatico: false },
+    ],
+  });
+  const C = cliInd({
+    uc: "C", cmc: 999, saldo: 9999, ug: "Piloto", nivel: "excessivo", inativo: true,
+    receitaTotal: 9999, despesaTotal: 1,
+    consumoEntregueArr: [9999], meses: ["01/2026"],
+    transacoes: [{ tipo: "Receita", mes: "01/2026", valor: 9999, fonte: "rd", status: "Recebido", vencimento: "10/01/2026" }],
+  });
+  const clientes = [A, B, C];
+  const ugPiloto = { nome: "Piloto", tipo: "GD1", capacidade_kwh: 3000, clientes: [A] };
+
+  const ind = computeIndicadores(clientes, [ugPiloto], { mesRef: "2026-01" });
+
+  it("ignora inativos nos agregados financeiros", () => {
+    expect(ind.clientes_ativos).toBe(2);
+    expect(ind.receita_total).toBe(1500); // 1200 + 300 (C excluído)
+    expect(ind.despesa_total).toBe(900);  // 400 + 500
+    expect(ind.ltv).toBe(600);            // 800 + (-200)
+    expect(ind.margem_pct).toBe(40);      // 600/1500
+  });
+
+  it("conta no-vermelho e sangria", () => {
+    expect(ind.n_vermelho).toBe(1);       // B
+    expect(ind.r_sangrando).toBe(-200);
+  });
+
+  it("R$/kWh global 12m e estocado batem com a fórmula da LTV", () => {
+    // ltv janela = 600, kWh = 1600 + 400 = 2000 → 0,30/kWh (C inativo é ignorado)
+    expect(ind.rs_kwh_global_12m).toBe(0.3);
+    expect(ind.consumo_kwh_12m).toBe(2000);
+    expect(ind.saldo_total_kwh).toBe(1200);   // 1000 + 200
+    expect(ind.estocado_total).toBe(360);     // 0,30 × 1200
+  });
+
+  it("distribuição de status e flags operacionais", () => {
+    expect(ind.n_ideal).toBe(1);
+    expect(ind.n_critico).toBe(1);
+    expect(ind.n_sem_ug).toBe(1);   // B
+    expect(ind.n_travados).toBe(1); // B
+  });
+
+  it("inadimplência (mesma classificação da aba)", () => {
+    expect(ind.inad_receitas_n).toBe(1);
+    expect(ind.inad_receitas_rs).toBe(300);
+    expect(ind.inad_despesas_n).toBe(1);
+    expect(ind.inad_despesas_rs).toBe(500);
+    expect(ind.inad_debito_n).toBe(0);
+  });
+
+  it("carregamento por UG com a chave slugificada", () => {
+    expect(ind.carreg_Piloto).toBe(carregamentoUG(ugPiloto.clientes, ugPiloto));
+    expect(ind.carreg_Piloto).toBe(50); // demanda 1500 / cap 3000
+  });
+
+  it("inclui identidade do snapshot", () => {
+    expect(ind.mes_ref).toBe("2026-01");
+    expect(typeof ind.registrado_em).toBe("string");
+  });
+
+  it("coletarInadimplencia ignora transações não-RD", () => {
+    const semRd = [cliInd({ uc: "X", saldo: 0, temDados: true,
+      transacoes: [{ tipo: "Receita", mes: "01/2026", valor: 100, fonte: "legado", status: "A receber", vencimento: "01/01/2026" }] })];
+    const r = coletarInadimplencia(semRd);
+    expect(r.receitasAtraso).toHaveLength(0);
   });
 });

@@ -1,7 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { SHEET_URLS } from "../config";
-import { parseSCAnalitico, parseFatAuri, parseInfoGerais, parseClientes, parseRDEquatorial, parseLegado } from "../utils/parsers";
-import { buildClientes, validarRateios, otimizadorGlobal, buildFinanceiro, mergeTransacoes } from "../utils/business";
+import { buildDataset } from "../utils/dataset";
 
 async function fetchCSV(url) {
   const res = await fetch(url);
@@ -24,26 +23,9 @@ export function useSheetData() {
         fetchCSV(SHEET_URLS.legado),
       ]);
 
-      const scData           = parseSCAnalitico(scText);
-      const fatData          = parseFatAuri(fatText);
-      const base             = parseClientes(clientesText);
-      const ugsInfo          = parseInfoGerais(infoText);
-      const rdTransacoes     = parseRDEquatorial(rdText);
-      const legadoTransacoes = parseLegado(legadoText);
-      const transacoes       = mergeTransacoes(rdTransacoes, legadoTransacoes);
-      const clientes         = buildClientes(scData, fatData, base);
-      buildFinanceiro(clientes, transacoes, fatData);
-
-      const clientesAtivos = clientes.filter(c => !c.inativo);
-      const ugsValidadas = validarRateios(clientesAtivos).map(u => ({
-        ...u,
-        capacidade_kwh: ugsInfo[u.nome]?.capacidade_kwh || 0,
-        ocupacao_atual:  ugsInfo[u.nome]?.ocupacao_atual  || 0,
-      }));
-
-      const planoGlobal = ugsValidadas.length
-        ? otimizadorGlobal(ugsValidadas, clientesAtivos)
-        : { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} };
+      const { clientes, ugsValidadas, planoGlobal } = buildDataset({
+        fatText, clientesText, scText, infoText, rdText, legadoText,
+      });
 
       setState({ data: { clientes, ugsValidadas, planoGlobal }, loading: false, error: null, lastUpdated: new Date() });
     } catch (err) {
