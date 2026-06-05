@@ -94,6 +94,41 @@ function MetricaBox({ label, valor, unidade, cor = "#152a22" }) {
   );
 }
 
+// ─── Evolução: gráfico de linha genérico ─────────────────────
+// series = [{ key, label, cor }]. data = linhas do histórico (mes_ref + campos).
+// dot sempre visível para que históricos de 1 ponto apareçam.
+function GraficoEvolucao({ titulo, data, series, formatador }) {
+  return (
+    <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md p-5">
+      <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600 mb-4">{titulo}</h3>
+      <ResponsiveContainer width="100%" height={240}>
+        <LineChart data={data} margin={{ top: 5, right: 10, bottom: 5, left: 0 }}>
+          <XAxis dataKey="mes_ref" stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} />
+          <YAxis stroke="#a89e89" tick={{ fill: "#6b6357", fontSize: 11 }} width={56} />
+          <Tooltip
+            contentStyle={{ backgroundColor: "#f5efe2", border: "1px solid #e2dbcc", fontSize: 12 }}
+            labelStyle={{ color: "#1a1812" }}
+            formatter={(v, name) => [formatador(v), name]}
+          />
+          <Legend iconType="plainline" wrapperStyle={{ fontSize: 11, color: "#6b6357", paddingTop: 8 }} />
+          {series.map(s => (
+            <Line
+              key={s.key}
+              type="monotone"
+              dataKey={s.key}
+              name={s.label}
+              stroke={s.cor}
+              strokeWidth={2}
+              dot={{ fill: s.cor, r: 3 }}
+              connectNulls
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function BannerValidacao({ ugs }) {
   const erros = ugs.filter(u => u.erro);
   if (!erros.length) return null;
