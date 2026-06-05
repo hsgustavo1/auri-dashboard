@@ -70,13 +70,38 @@ import { calcularCamposFaltantes, validarRegistro } from "./aquisicao.js";
 
 const baseCompletoPF = {
   tipo_pessoa: "PF",
-  titular: { nome_ou_razao: "Fulano", cpf_cnpj: "529.982.247-25", rg: "123", estado_civil: "Casado",
-             profissao: "Eng", email: "a@b.com", telefone: "(64) 90000-0000" },
-  endereco: { logradouro: "Rua X, 1", cep: "75800000" },
-  unidade_consumidora: { uc: "173091201210" },
+  titular: {
+    nome_ou_razao: "Fulano", cpf_cnpj: "529.982.247-25",
+    rg: "123", rg_orgao: "SSP/GO", nacionalidade: "Brasileira",
+    data_nascimento: "01/01/1980", estado_civil: "Casado",
+    profissao: "Eng", email: "a@b.com", telefone: "(64) 90000-0000",
+  },
+  endereco: {
+    logradouro: "Rua X", numero: "1", bairro: "Centro",
+    municipio: "Mineiros", uf: "GO", cep: "75800000",
+  },
+  unidade_consumidora: {
+    uc: "173091201210",
+    distribuidora: "Equatorial Goiás",
+    tipo_fornecimento: "MONOFÁSICO",
+  },
   consumo: { consumo_medio_kwh: 614 },
-  comercial: { desconto_garantido_pct: 15 },
-  aluguel_imovel: { valor_mensal: 1000, prazo_meses: 12, data_inicio: "2025-01-01", endereco_imovel: "Rua X, 1" },
+  comercial: { desconto_garantido_pct: 15, energia_contratada_kwh_ano: 7368 },
+  aluguel_imovel: {
+    valor_mensal: 1000, prazo_meses: 12, data_inicio: "01/01/2025",
+    logradouro: "Rua X", numero: "1", bairro: "Centro",
+    municipio: "Mineiros", uf: "GO", cep: "75800000",
+  },
+};
+
+const baseCompletoPJ = {
+  ...baseCompletoPF,
+  tipo_pessoa: "PJ",
+  titular: { nome_ou_razao: "Empresa LTDA", cpf_cnpj: "11.222.333/0001-81" },
+  representante_legal: {
+    nome: "João", cargo: "Sócio", cpf: "529.982.247-25", rg: "456",
+    rg_orgao: "SSP/GO", nacionalidade: "Brasileira", data_nascimento: "01/01/1975",
+  },
 };
 
 describe("calcularCamposFaltantes", () => {
@@ -87,16 +112,38 @@ describe("calcularCamposFaltantes", () => {
       expect.arrayContaining(["titular.estado_civil", "titular.profissao"])
     );
   });
-  it("PJ exige representante legal", () => {
-    const r = { ...baseCompletoPF, tipo_pessoa: "PJ", representante_legal: null };
+  it("PF sem rg_orgao/nacionalidade/data_nascimento", () => {
+    const r = { ...baseCompletoPF, titular: { ...baseCompletoPF.titular, rg_orgao: "", nacionalidade: "", data_nascimento: "" } };
     expect(calcularCamposFaltantes(r)).toEqual(
-      expect.arrayContaining(["representante_legal.nome", "representante_legal.cpf", "representante_legal.cargo"])
+      expect.arrayContaining(["titular.rg_orgao", "titular.nacionalidade", "titular.data_nascimento"])
     );
   });
+  it("PJ exige representante legal completo", () => {
+    const r = { ...baseCompletoPJ, representante_legal: null };
+    expect(calcularCamposFaltantes(r)).toEqual(
+      expect.arrayContaining([
+        "representante_legal.nome", "representante_legal.cpf", "representante_legal.cargo",
+        "representante_legal.rg_orgao", "representante_legal.nacionalidade",
+      ])
+    );
+  });
+  it("exige distribuidora e tipo_fornecimento", () => {
+    const r = { ...baseCompletoPF, unidade_consumidora: { uc: "173091201210" } };
+    expect(calcularCamposFaltantes(r)).toEqual(
+      expect.arrayContaining(["unidade_consumidora.distribuidora", "unidade_consumidora.tipo_fornecimento"])
+    );
+  });
+  it("exige endereço aluguel estruturado", () => {
+    const r = { ...baseCompletoPF, aluguel_imovel: { valor_mensal: 1000, prazo_meses: 12, data_inicio: "01/01/2025" } };
+    expect(calcularCamposFaltantes(r)).toEqual(
+      expect.arrayContaining(["aluguel_imovel.logradouro", "aluguel_imovel.numero"])
+    );
+  });
+  it("completo PJ → vazio", () => expect(calcularCamposFaltantes(baseCompletoPJ)).toEqual([]));
 });
 
 describe("validarRegistro", () => {
-  it("válido quando completo", () => {
+  it("válido quando completo PF", () => {
     const v = validarRegistro(baseCompletoPF);
     expect(v.valido).toBe(true);
     expect(v.campos_faltantes).toEqual([]);

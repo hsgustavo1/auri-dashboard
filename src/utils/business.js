@@ -763,14 +763,18 @@ export function otimizadorGlobal(ugsValidadas, todosClientes = null) {
 }
 
 // Projeta quanto tempo a nova alocação % sobrevive até virar problema:
-//   - "ja_critico" / "ja_excessivo": já está fora da faixa hoje
+//   - "ja_critico" / "ja_excessivo": já fora da faixa hoje E sem reversão
+//   - "recuperando": já crítico hoje, mas a nova alocação acumula → meses até sair do crítico
+//   - "normalizando": já excessivo hoje, mas a nova alocação drena → meses até sair do excesso
 //   - "ate_critico": saldo drenando → meses até razão < 0.5× CMC
 //   - "ate_excessivo": saldo acumulando → meses até razão > 6× CMC
 //   - "estavel": net mensal < 5% do CMC → sem problema previsto
 // Retorna null quando não dá para computar (CMC=0, sem distribuivel, geradora).
 export function projetarHorizonte(cliente, novoRateioPct, distribuivel) {
   const cmc = cliente.cmc;
-  if (!cmc || cmc <= 0 || !distribuivel || cliente.ehUCGeradora) return null;
+  // GD2: saldo preso — não projeta. GD1: participa do rateio → projeta normalmente.
+  if (!cmc || cmc <= 0 || !distribuivel) return null;
+  if (cliente.ehUCGeradora && cliente.tipoGd === "GD2") return null;
 
   const saldo = cliente.saldo || 0;
   const recebeMensal = (novoRateioPct / 100) * distribuivel;
@@ -778,8 +782,22 @@ export function projetarHorizonte(cliente, novoRateioPct, distribuivel) {
   const SALDO_CRITICO   = 0.5 * cmc;
   const SALDO_EXCESSIVO = 6   * cmc;
 
-  if (saldo < SALDO_CRITICO)   return { tipo: "ja_critico",   meses: 0 };
-  if (saldo > SALDO_EXCESSIVO) return { tipo: "ja_excessivo", meses: 0 };
+  // Já fora da faixa hoje — mas a trajetória importa: se a nova alocação
+  // reverte a direção, o cliente está se recuperando/normalizando, não parado.
+  if (saldo < SALDO_CRITICO) {
+    if (netMensal > cmc * 0.05) {
+      // acumula → tempo para voltar a sair do crítico (≥ 0,5× CMC)
+      return { tipo: "recuperando", meses: (SALDO_CRITICO - saldo) / netMensal };
+    }
+    return { tipo: "ja_critico", meses: 0 };
+  }
+  if (saldo > SALDO_EXCESSIVO) {
+    if (netMensal < -cmc * 0.05) {
+      // drena → tempo para voltar a sair do excesso (≤ 6× CMC)
+      return { tipo: "normalizando", meses: (saldo - SALDO_EXCESSIVO) / (-netMensal) };
+    }
+    return { tipo: "ja_excessivo", meses: 0 };
+  }
 
   if (Math.abs(netMensal) < cmc * 0.05) {
     return { tipo: "estavel", meses: Infinity };

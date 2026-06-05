@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 
 .vercel
+
+# Extrações da Auri Docs (contêm PII: CPF, RG) — ponte local skill→app, nunca versionar
+public/_extracoes/

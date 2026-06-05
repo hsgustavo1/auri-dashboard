@@ -62,17 +62,36 @@ export function conferirTitular({ contaCpfCnpj, docCpf }) {
 }
 
 export const OBRIG_COMUM = [
-  "titular.nome_ou_razao", "titular.cpf_cnpj", "titular.estado_civil",
-  "titular.profissao", "titular.email", "titular.telefone",
-  "endereco.logradouro", "endereco.cep",
-  "unidade_consumidora.uc", "consumo.consumo_medio_kwh",
+  "titular.nome_ou_razao", "titular.cpf_cnpj",
+  "endereco.logradouro", "endereco.numero", "endereco.bairro",
+  "endereco.municipio", "endereco.uf", "endereco.cep",
+  "unidade_consumidora.uc",
+  "unidade_consumidora.distribuidora",
+  "unidade_consumidora.tipo_fornecimento",
+  "consumo.consumo_medio_kwh",
   "comercial.desconto_garantido_pct",
+  "comercial.energia_contratada_kwh_ano",
 ];
-export const OBRIG_PF = ["titular.rg"];
-export const OBRIG_PJ = ["representante_legal.nome", "representante_legal.cpf", "representante_legal.cargo"];
+// Campos obrigatórios apenas para Pessoa Física (titular = pessoa individual)
+export const OBRIG_PF = [
+  "titular.rg", "titular.rg_orgao",
+  "titular.nacionalidade", "titular.data_nascimento",
+  "titular.estado_civil", "titular.profissao",
+  "titular.email", "titular.telefone",
+];
+export const OBRIG_PJ = [
+  "representante_legal.nome", "representante_legal.cargo",
+  "representante_legal.cpf", "representante_legal.rg",
+  "representante_legal.rg_orgao",
+  "representante_legal.nacionalidade",
+  "representante_legal.data_nascimento",
+];
 export const OBRIG_ALUGUEL = [
   "aluguel_imovel.valor_mensal", "aluguel_imovel.prazo_meses",
-  "aluguel_imovel.data_inicio", "aluguel_imovel.endereco_imovel",
+  "aluguel_imovel.data_inicio",
+  "aluguel_imovel.logradouro", "aluguel_imovel.numero",
+  "aluguel_imovel.bairro", "aluguel_imovel.municipio",
+  "aluguel_imovel.uf", "aluguel_imovel.cep",
 ];
 
 function getPath(obj, path) {

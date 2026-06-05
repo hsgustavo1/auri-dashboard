@@ -112,6 +112,24 @@ function BannerValidacao({ ugs }) {
 }
 
 // ─── CardUG ──────────────────────────────────────────────────
+// Clientes de uma UG que exigem ação: já em crítico/excessivo hoje, ou que
+// chegam a crítico/excessivo dentro da janela de HORIZONTE_ACAO_MESES.
+// (Recuperando/normalizando NÃO contam — a trajetória já se corrige sozinha.)
+const HORIZONTE_ACAO_MESES = 6;
+function clientesExigemAcao(ug) {
+  const denom = capacidadeEfetivaUG(ug, ug.clientes);
+  if (denom <= 0) return [];
+  return ug.clientes
+    .filter(c => !c.ehUCGeradora && (c.cmc || 0) > 0 && (c.rateio_pct || 0) > 0)
+    .filter(c => {
+      const proj = projetarHorizonte(c, c.rateio_pct || 0, denom);
+      if (!proj) return false;
+      if (proj.tipo === "ja_critico" || proj.tipo === "ja_excessivo") return true;
+      if ((proj.tipo === "ate_critico" || proj.tipo === "ate_excessivo") && proj.meses <= HORIZONTE_ACAO_MESES) return true;
+      return false;
+    });
+}
+
 function CardUG({ ug, onClick }) {
   const cap = ug.capacidade_kwh || 0;
   const car = carregamentoUG(ug.clientes, ug);
@@ -119,6 +137,7 @@ function CardUG({ ug, onClick }) {
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
   const cont = { critico: 0, baixo: 0, ideal: 0, alto: 0, excessivo: 0 };
   ug.clientes.filter(c => !c.ehUCGeradora).forEach(c => { if (cont[c.status.nivel] !== undefined) cont[c.status.nivel]++; });
+  const nAcao = clientesExigemAcao(ug).length;
 
   return (
     <button onClick={onClick} className="text-left bg-white border border-stone-200 shadow-auri-sm hover:shadow-auri-md hover:-translate-y-0.5 hover:border-forest-300 transition-all rounded-md p-5 relative overflow-hidden">
@@ -138,6 +157,13 @@ function CardUG({ ug, onClick }) {
             <span className="text-sun-500/60">▸</span> {ucGer.nome}
             {ug.tipo === "GD2" && <span className="ml-2 font-mono text-stone-600">{(ucGer.saldo || 0).toFixed(0)} kWh travados</span>}
           </p>
+        )}
+        {nAcao > 0 && (
+          <div className="mb-3 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] px-2 py-1 bg-terra-100/60 text-terra-600 border border-terra-500/40 rounded-sm">
+            <span>⚠</span>
+            <span className="font-semibold">Necessário ação</span>
+            <span className="text-terra-600/80 normal-case tracking-normal">· {nAcao} {nAcao === 1 ? "cliente em crítico/excesso ≤6m" : "clientes em crítico/excesso ≤6m"}</span>
+          </div>
         )}
         <div className="mb-3">
           <div className="flex justify-between items-baseline mb-1">
@@ -185,6 +211,8 @@ function formatarHorizonteEvento(proj) {
   if (proj.tipo === "estavel") return { txt: "Adequado", cor: "#2f7a52" };
   if (proj.tipo === "ja_critico") return { txt: "Crítico hoje", cor: "#a8482a" };
   if (proj.tipo === "ja_excessivo") return { txt: "Excessivo hoje", cor: "#6d4a8c" };
+  if (proj.tipo === "recuperando") return { txt: "Recuperando", cor: "#2f7a52" };
+  if (proj.tipo === "normalizando") return { txt: "Normalizando", cor: "#2f6690" };
   const m = Math.round(proj.meses);
   if (proj.tipo === "ate_critico") return { txt: `Crítico em ~${m}m`, cor: "#a8482a" };
   // ate_excessivo: acúmulo distante não é acionável → Adequado
@@ -403,30 +431,26 @@ function montarChartData(cliente, ug, planoGlobal) {
   const ehGD2 = ug?.tipo === "GD2";
   const podeProjetar = !(cliente.ehUCGeradora && ehGD2) && cmc > 0 && distrib > 0;
 
-  // Ponte entre histórico e projeção — usa o mês corrente como label.
-  const mesAtual = String(new Date().getMonth() + 1).padStart(2, '0');
-  const ultimoMesHist = ultimos.at(-1)?.slice(0, 2);
-  if (ultimoMesHist !== mesAtual) {
-    pontos.push({
-      label: mesAtual,
-      saldoHist: saldoNow,
-      projAtual: podeProjetar ? saldoNow : null,
-      projOtimizado: podeProjetar ? saldoNow : null,
-    });
-  } else if (podeProjetar && pontos.length > 0) {
+  if (!podeProjetar) return pontos;
+
+  // A projeção parte do último ponto REAL (sem duplicar o mês corrente):
+  // ancora as linhas tracejadas no saldo real mais recente.
+  if (pontos.length > 0) {
     pontos[pontos.length - 1].projAtual = saldoNow;
     pontos[pontos.length - 1].projOtimizado = saldoNow;
   }
-
-  if (!podeProjetar) return pontos;
 
   const pctAtual = cliente.rateio_pct || 0;
   const pctProposto = rateioFinalDoCliente(cliente, ug, planoGlobal);
   const projetar = (pct, n) => Math.max(0, saldoNow + n * ((pct / 100) * distrib - cmc));
 
+  // Rótulos da projeção = meses reais subsequentes ao último mês histórico
+  // (07, 08, …) em vez de +1m, +2m.
+  const ultimoMesHist = parseInt(ultimos.at(-1)?.slice(0, 2), 10) || new Date().getMonth() + 1;
   for (let n = 1; n <= N_PROJ; n++) {
+    const mesProj = String(((ultimoMesHist - 1 + n) % 12) + 1).padStart(2, '0');
     pontos.push({
-      label: `+${n}m`,
+      label: mesProj,
       projAtual:     projetar(pctAtual, n),
       projOtimizado: projetar(pctProposto, n),
     });
@@ -730,7 +754,6 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
   const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || 0), 0);
   const cap = ug.capacidade_kwh || 0;
   const car = carregamentoUG(ug.clientes, ug);
-  const planoUG = planoGlobal?.por_ug?.[ug.nome];
   const realocacoesUG = (planoGlobal?.realocar || []).filter(r => r.ug_origem === ug.nome || r.ug_destino === ug.nome);
 
   return (
@@ -771,62 +794,6 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
         </div>
       )}
       <DistribuicaoUnificada ug={ug} onClickCliente={onClickCliente} />
-      <div className="border border-stone-200 p-6 bg-white shadow-auri-sm mb-4">
-        <div className="flex items-baseline justify-between mb-4">
-          <div>
-            <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">Ajustes de Rateio Sugeridos</h3>
-            <p className="text-[10px] text-stone-600 mt-1">Redistribuição interna garantindo soma = 100%</p>
-          </div>
-          {planoUG && (
-            <div className="text-right text-xs font-mono">
-              <span className="text-stone-600">{planoUG.soma_antes.toFixed(0)}%</span>
-              <span className="text-stone-600 mx-1">→</span>
-              <span className={planoUG.soma_depois === 100 ? "text-[#2f7a52]" : "text-terra-600"}>{planoUG.soma_depois}%</span>
-            </div>
-          )}
-        </div>
-        {!planoUG || planoUG.acoes.length === 0 ? (
-          <p className="text-center py-4 text-stone-600 text-sm">Rateio interno já equilibrado. Nenhum ajuste necessário.</p>
-        ) : (
-          <div>
-            <div className="border border-stone-200 overflow-x-auto mb-3">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-bone border-b border-stone-200">
-                    {["Cliente","UC","Atual","Sugerido","Δ","Saldo (meses)","Normaliza em"].map(h => (
-                      <th key={h} className="text-left px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-normal whitespace-nowrap">{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {planoUG.acoes.map((a, i) => (
-                    <tr key={i} className={`border-b border-stone-200/80 ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"}`}>
-                      <td className="px-3 py-2">
-                        <button onClick={() => onClickCliente(a.cliente)} className="text-stone-600 hover:text-sun-600 text-left truncate max-w-[160px] block">{a.cliente.nome}</button>
-                      </td>
-                      <td className="px-3 py-2 font-mono text-[10px] text-stone-600 whitespace-nowrap">{a.cliente.uc}</td>
-                      <td className="px-3 py-2 text-right font-mono text-stone-400">{a.de}%</td>
-                      <td className="px-3 py-2 text-right font-mono text-sun-500">{a.para}%</td>
-                      <td className="px-3 py-2 text-right font-mono">
-                        <span className={a.delta > 0 ? "text-[#2f7a52]" : "text-terra-600"}>{a.delta > 0 ? "+" : ""}{a.delta}%</span>
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono" style={{ color: a.cliente.status.cor }}>
-                        {a.cliente.cmc > 0 ? (a.cliente.saldo / a.cliente.cmc).toFixed(1) : "—"}
-                      </td>
-                      <td className="px-3 py-2 text-right font-mono text-stone-400">
-                        {a.meses === 0 ? <span className="text-[#2f7a52]">✓ ok</span> : a.meses >= 999 ? <span className="text-terra-600">sem dreno</span> : `${a.meses}m`}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-[11px] text-stone-600 leading-relaxed">
-              Cada % foi recalculado proporcionalmente ao CMC e ao estado do saldo. A soma final é sempre 100%. "Normaliza em" = meses até o saldo chegar no colchão ideal (2× CMC).
-            </p>
-          </div>
-        )}
-      </div>
       {realocacoesUG.length > 0 && (
         <div className="border border-sun-400 bg-sun-100/40 p-6">
           <div className="flex items-baseline justify-between mb-4">
@@ -1206,6 +1173,13 @@ function formatarProjecao(proj) {
   if (proj.tipo === "estavel") return { label: "estável (sem problema previsto)", cor: "#2f7a52" };
   if (proj.tipo === "ja_critico")   return { label: "já em crítico hoje",   cor: "#a8482a" };
   if (proj.tipo === "ja_excessivo") return { label: "já em excessivo hoje", cor: "#6d4a8c" };
+  if (proj.tipo === "recuperando" || proj.tipo === "normalizando") {
+    const mr = proj.meses;
+    const mrStr = mr < 1 ? "<1m" : mr < 10 ? `${mr.toFixed(1)}m` : `${Math.round(mr)}m`;
+    return proj.tipo === "recuperando"
+      ? { label: `recuperando · ~${mrStr} p/ sair do crítico`, cor: "#2f7a52" }
+      : { label: `normalizando · ~${mrStr} p/ sair do excesso`, cor: "#2f6690" };
+  }
   const m = proj.meses;
   const mStr = m < 1 ? "<1m" : m < 10 ? `${m.toFixed(1)}m` : `${Math.round(m)}m`;
   const destino = proj.tipo === "ate_critico" ? "crítico" : "excessivo";
@@ -1255,16 +1229,21 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
     saindo: "←",
   }[estado];
 
-  const corBarraAtual = ehGeradora ? "#6b6357" : (cliente.status?.cor || "#6b6357");
+  // GD2: saldo preso — sem projeção, pulmão nem CMC comparativo.
+  // GD1: saldo participa do rateio como qualquer cliente → mesma lógica.
+  const ehGD2 = ehGeradora && cliente.tipoGd === "GD2";
+
+  const corBarraAtual = (ehGeradora && ehGD2) ? "#6b6357" : (cliente.status?.cor || "#6b6357");
   const corBarraProposta = estado === "ajustado" ? "#c98a1f"
     : estado === "entrando" ? "#2f7a52"
     : corBarraAtual;
 
-  const pulmaoFmt = !ehGeradora ? formatarPulmao(pulmaoAtualMeses) : null;
+  const pulmaoFmt = !ehGD2 ? formatarPulmao(pulmaoAtualMeses) : null;
   const projFmt = formatarProjecao(projecao);
   // Projeção do lado ATUAL: quanto tempo aguenta mantendo o rateio atual.
   // Não se aplica a "entrando" (rateioAtual = 0, cliente não está nesta UG hoje).
-  const projecaoAtualRaw = !ehGeradora && estado !== "entrando" && denom > 0
+  // GD2 geradora: sem projeção (saldo preso). GD1: projeta normalmente.
+  const projecaoAtualRaw = !ehGD2 && estado !== "entrando" && denom > 0
     ? projetarHorizonte(cliente, rateioAtual, denom)
     : null;
   const projAtualFmt = formatarProjecao(projecaoAtualRaw);
@@ -1293,7 +1272,7 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
         </div>
         {/* Metadados: CMC/autoconsumo (+ pulmão atual p/ não-geradora) */}
         <div className="flex items-center gap-2 text-[10px] font-mono pl-px">
-          <span className="text-stone-600">{ehGeradora ? "autoconsumo" : "CMC"} <span className="text-stone-600">{cmc.toFixed(0)}</span></span>
+          <span className="text-stone-600">{ehGD2 ? "autoconsumo" : "CMC"} <span className="text-stone-600">{cmc.toFixed(0)}</span></span>
           {pulmaoFmt && (
             <>
               <span className="text-stone-700">·</span>
@@ -1370,7 +1349,7 @@ function LinhaComparativa({ linha, maxPct, denom = 0, onClickCliente, editavel =
         <div className="text-[10px] font-mono pl-px">
           {estado === "saindo" ? (
             <span className="text-stone-600">projeção será recalculada em <span className="text-stone-600">{destino}</span></span>
-          ) : ehGeradora ? (
+          ) : ehGD2 ? (
             <span className="text-stone-600">—</span>
           ) : projFmt ? (
             <span style={{ color: projFmt.cor }}>{projFmt.label}</span>
@@ -2184,8 +2163,32 @@ function TelaLTV({ clientes, onClickCliente }) {
     if (filtroAbertos === "qualquer_pendente")  rows = rows.filter(r => r.receitaPendente > 0 || r.despesaPendente > 0);
     return rows;
   })();
+  // Drill-down do mês: aplica os mesmos filtros Margem e "Em aberto" da tabela.
+  const linhasMes = (() => {
+    if (!dadosMes) return null;
+    let rows = filtroMargem === "negativa" ? dadosMes.filter(r => r.ltv < 0)
+      : filtroMargem === "positiva" ? dadosMes.filter(r => r.ltv >= 0)
+      : dadosMes;
+    if (filtroAbertos === "receita_pendente")   rows = rows.filter(r => r.receitaPendente > 0);
+    if (filtroAbertos === "despesa_pendente")   rows = rows.filter(r => r.despesaPendente > 0);
+    if (filtroAbertos === "qualquer_pendente")  rows = rows.filter(r => r.receitaPendente > 0 || r.despesaPendente > 0);
+    return rows;
+  })();
   // Conta inativos com dados financeiros (independente do toggle, para exibir o botão)
   const nInativos = clientes.filter(c => c.inativo && c.financeiro?.temDados).length;
+
+  // Estado dos filtros vs. defaults — controla o botão "Limpar filtros".
+  const algumFiltroAtivo = filtroUG !== "todas" || filtroMargem !== "todos"
+    || filtroAbertos !== "todos" || filtroAtividade !== "ativos"
+    || mesSelecionado != null || presetAtivo !== "12m";
+  const resetarFiltros = () => {
+    setFiltroUG("todas");
+    setFiltroMargem("todos");
+    setFiltroAbertos("todos");
+    setFiltroAtividade("ativos");
+    setMesSelecionado(null);
+    aplicarPreset("12m"); // restaura período padrão + presetAtivo
+  };
 
   return (
     <div>
@@ -2308,10 +2311,20 @@ function TelaLTV({ clientes, onClickCliente }) {
             <option value="todos">Todos</option>
           </select>
         </div>
-        <div className="ml-auto pb-2 text-xs text-stone-600 font-mono">
-          {filtroMargem === "negativa" ? `${linhasTabela.length} no vermelho`
-            : filtroMargem === "positiva" ? `${linhasTabela.length} margem positiva`
-            : `${dadosTabelaAtivos.length} ativos com dados`}
+        <div className="ml-auto pb-2 flex items-center gap-3">
+          {algumFiltroAtivo && (
+            <button
+              onClick={resetarFiltros}
+              className="text-[10px] uppercase tracking-[0.15em] border border-stone-300 text-stone-600 hover:text-stone-800 hover:border-stone-400 px-2.5 py-1.5 transition-colors"
+            >
+              ✕ Limpar filtros
+            </button>
+          )}
+          <span className="text-xs text-stone-600 font-mono">
+            {filtroMargem === "negativa" ? `${linhasTabela.length} no vermelho`
+              : filtroMargem === "positiva" ? `${linhasTabela.length} margem positiva`
+              : `${dadosTabelaAtivos.length} ativos com dados`}
+          </span>
         </div>
       </div>
 
@@ -2355,12 +2368,12 @@ function TelaLTV({ clientes, onClickCliente }) {
       )}
 
       {/* Drill-down por mês */}
-      {mesSelecionado && dadosMes && (
+      {mesSelecionado && linhasMes && (
         <div className="border border-stone-200 bg-white shadow-auri-sm mb-6">
           <div className="px-5 py-3 border-b border-stone-200 flex items-center justify-between">
             <h3 className="text-xs uppercase tracking-[0.2em] text-stone-600">
               Composição · <span className="text-stone-800">{mesSelecionado}</span>
-              <span className="ml-3 text-stone-400 normal-case tracking-normal">{dadosMes.length} cliente{dadosMes.length !== 1 ? "s" : ""}</span>
+              <span className="ml-3 text-stone-400 normal-case tracking-normal">{linhasMes.length} cliente{linhasMes.length !== 1 ? "s" : ""}</span>
             </h3>
             <button onClick={() => setMesSelecionado(null)} className="text-[10px] uppercase tracking-[0.15em] text-stone-400 hover:text-stone-700 transition-colors">✕ fechar</button>
           </div>
@@ -2382,7 +2395,7 @@ function TelaLTV({ clientes, onClickCliente }) {
                 </tr>
               </thead>
               <tbody>
-                {dadosMes.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv }, i) => (
+                {linhasMes.map(({ cliente, receitaTotal, receitaPago, receitaPendente, despesaTotal, despesaPago, despesaPendente, ltv }, i) => (
                   <tr key={cliente.uc} onClick={() => onClickCliente(cliente)} className={`border-b border-stone-200/80 hover:bg-bone/70 cursor-pointer ${i % 2 === 0 ? "bg-cream" : "bg-cream/50"} ${cliente.inativo ? "opacity-60" : ""}`}>
                     <td className="px-3 py-2">
                       <div className="text-stone-800 truncate max-w-[200px]">
@@ -2406,14 +2419,14 @@ function TelaLTV({ clientes, onClickCliente }) {
                   </tr>
                 ))}
               </tbody>
-              {dadosMes.length > 1 && (() => {
-                const totR = dadosMes.reduce((s, r) => s + r.receitaTotal, 0);
-                const totD = dadosMes.reduce((s, r) => s + r.despesaTotal, 0);
+              {linhasMes.length > 1 && (() => {
+                const totR = linhasMes.reduce((s, r) => s + r.receitaTotal, 0);
+                const totD = linhasMes.reduce((s, r) => s + r.despesaTotal, 0);
                 const totL = totR - totD;
                 return (
                   <tfoot>
                     <tr className="bg-bone border-t border-stone-300">
-                      <td className="px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-mono" colSpan={2}>Total · {dadosMes.length} clientes</td>
+                      <td className="px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] text-stone-600 font-mono" colSpan={2}>Total · {linhasMes.length} clientes</td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-[#2f7a52]">{fmtBRL(totR)}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs font-bold text-[#a8482a]">{fmtBRL(totD)}</td>
                       <td className="px-3 py-2.5 text-right font-mono text-xs font-bold" style={{ color: totL >= 0 ? "#2f7a52" : "#a8482a" }}>{fmtBRL(totL)}</td>
@@ -2538,6 +2551,260 @@ function TelaLTV({ clientes, onClickCliente }) {
   );
 }
 
+// ─── Helpers de data para Inadimplência ──────────────────────
+function parseBRDate(str) {
+  if (!str) return null;
+  const parts = str.split("/");
+  if (parts.length !== 3) return null;
+  const [d, m, y] = parts.map(Number);
+  if (!d || !m || !y || y < 2000) return null;
+  return new Date(y, m - 1, d);
+}
+function hoje() { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }
+function diasAtraso(dataVenc) {
+  if (!dataVenc) return null;
+  const diff = hoje() - dataVenc;
+  return diff > 0 ? Math.floor(diff / 86400000) : 0;
+}
+function fmtData(str) {
+  if (!str) return "—";
+  // já está em DD/MM/YYYY; retorna como está
+  return str;
+}
+
+// ─── TelaInadimplencia ───────────────────────────────────────
+function TelaInadimplencia({ clientes, onClickCliente }) {
+  const [ord, setOrd] = useState({ secao: null, col: "dias", dir: "desc" });
+  const toggleOrd = (secao, col) =>
+    setOrd(prev => prev.secao === secao && prev.col === col
+      ? { secao, col, dir: prev.dir === "desc" ? "asc" : "desc" }
+      : { secao, col, dir: "desc" });
+  const hoje_ = hoje();
+
+  // Coleta transações RD de todos os clientes nas três categorias
+  const receitasAtraso = [];
+  const despesasNaoPagas = [];
+  const debitoSemConfirmacao = [];
+
+  clientes.forEach(c => {
+    if (!c.financeiro?.temDados) return;
+    (c.financeiro.transacoes || []).forEach(t => {
+      if (t.fonte !== "rd") return; // só RD Equatorial
+      const venc = parseBRDate(t.vencimento);
+
+      if (t.tipo === "Receita") {
+        // Receitas com status A_receber/A receber e vencimento passado
+        const statusPendente = /a.?receber/i.test(t.status);
+        if (statusPendente && venc && venc < hoje_) {
+          receitasAtraso.push({ ...t, cliente: c, vencDate: venc,
+            dias: diasAtraso(venc) });
+        }
+      } else if (t.tipo === "Despesa") {
+        const efetivada = !!(t.efetivacao && t.efetivacao.trim());
+        if (t.debitoAutomatico) {
+          // Débito automático: alerta se vencimento passou e sem efetivação
+          if (!efetivada && venc && venc < hoje_) {
+            debitoSemConfirmacao.push({ ...t, cliente: c, vencDate: venc,
+              dias: diasAtraso(venc) });
+          }
+        } else {
+          // Não é débito automático: em aberto e sem efetivação
+          const statusAberto = /em.?aberto|a.?pagar|pendente/i.test(t.status)
+            || (t.status !== "Pago" && !efetivada);
+          if (statusAberto && !efetivada) {
+            despesasNaoPagas.push({ ...t, cliente: c, vencDate: venc,
+              dias: venc ? diasAtraso(venc) : null });
+          }
+        }
+      }
+    });
+  });
+
+  // Ordena cada seção
+  function ordenar(lista, secao) {
+    if (ord.secao !== secao) return lista;
+    const mul = ord.dir === "desc" ? -1 : 1;
+    return [...lista].sort((a, b) => {
+      if (ord.col === "nome")  return mul * a.cliente.nome.localeCompare(b.cliente.nome);
+      if (ord.col === "valor") return mul * (b.valor - a.valor);
+      if (ord.col === "venc")  return mul * ((b.vencDate?.getTime() ?? 0) - (a.vencDate?.getTime() ?? 0));
+      if (ord.col === "dias")  return mul * ((b.dias ?? -1) - (a.dias ?? -1));
+      return 0;
+    });
+  }
+
+  const totalRecAtr = receitasAtraso.reduce((s, t) => s + t.valor, 0);
+  const totalDespNP = despesasNaoPagas.reduce((s, t) => s + t.valor, 0);
+  const totalDebAuto = debitoSemConfirmacao.reduce((s, t) => s + t.valor, 0);
+  const nAlerts = receitasAtraso.length + despesasNaoPagas.length + debitoSemConfirmacao.length;
+
+  function Th({ secao, col, children, align = "left" }) {
+    const ativo = ord.secao === secao && ord.col === col;
+    return (
+      <th className={`px-3 py-2.5 text-[10px] uppercase tracking-[0.18em] font-normal text-${align} whitespace-nowrap`}>
+        <button onClick={() => toggleOrd(secao, col)}
+          className={`hover:text-stone-800 transition-colors ${ativo ? "text-stone-800" : "text-stone-500"}`}>
+          {children}<span className="text-stone-400">{ativo ? (ord.dir === "desc" ? " ↓" : " ↑") : " ↕"}</span>
+        </button>
+      </th>
+    );
+  }
+
+  function SecaoVazia({ msg }) {
+    return (
+      <tr><td colSpan={6} className="px-4 py-6 text-center text-stone-500 text-sm">{msg}</td></tr>
+    );
+  }
+
+  function LinhaTransacao({ t, corDias, colunaExtra }) {
+    const dias = t.dias;
+    const corD = dias == null ? "#a89e89" : dias > 30 ? "#a8482a" : dias > 7 ? "#c98a1f" : "#6b6357";
+    return (
+      <tr className="border-b border-stone-200/70 hover:bg-bone/70 transition-colors">
+        <td className="px-3 py-2 text-sm">
+          <button onClick={() => onClickCliente(t.cliente)}
+            className="text-stone-700 hover:text-sun-600 text-left truncate max-w-[180px] block">{t.cliente.nome}</button>
+          <div className="text-[10px] font-mono text-stone-400">{t.uc}</div>
+        </td>
+        <td className="px-3 py-2 text-xs text-stone-600">{t.mes}</td>
+        <td className="px-3 py-2 text-right font-mono text-xs font-semibold text-stone-800">{fmtBRL(t.valor)}</td>
+        <td className="px-3 py-2 text-xs text-stone-600 whitespace-nowrap">{fmtData(t.vencimento)}</td>
+        <td className="px-3 py-2 text-right font-mono text-xs" style={{ color: corD }}>
+          {dias != null ? `${dias}d` : "—"}
+        </td>
+        {colunaExtra && <td className="px-3 py-2">{colunaExtra(t)}</td>}
+      </tr>
+    );
+  }
+
+  function TotalRow({ lista, colSpan = 5 }) {
+    if (lista.length <= 1) return null;
+    const total = lista.reduce((s, t) => s + t.valor, 0);
+    return (
+      <tr className="bg-bone border-t border-stone-300">
+        <td colSpan={2} className="px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-stone-600">{lista.length} ocorrências</td>
+        <td className="px-3 py-2 text-right font-mono text-xs font-bold text-stone-800">{fmtBRL(total)}</td>
+        <td colSpan={colSpan - 3} />
+      </tr>
+    );
+  }
+
+  return (
+    <div>
+      {/* Título + KPIs */}
+      <div className="mb-6">
+        <h2 className="text-2xl text-stone-800 mb-1" style={{ fontFamily: "Fraunces, serif" }}>Inadimplência</h2>
+        <p className="text-xs text-stone-600">Receitas em aberto · despesas não pagas · débitos automáticos sem confirmação.</p>
+      </div>
+
+      {nAlerts === 0 ? (
+        <div className="border border-stone-200 p-10 text-center text-stone-500 bg-white shadow-auri-sm">
+          <div className="text-2xl mb-2">✓</div>
+          <p className="text-sm">Nenhuma pendência identificada nas transações do R_D_Equatorial.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-4 mb-8">
+          {[
+            ["Receitas em atraso", receitasAtraso.length, totalRecAtr, "#a8482a"],
+            ["Despesas não pagas", despesasNaoPagas.length, totalDespNP, "#a8482a"],
+            ["Débito auto. s/ confirmação", debitoSemConfirmacao.length, totalDebAuto, "#c98a1f"],
+          ].map(([l, n, v, cor]) => (
+            <div key={l} className="border border-stone-200 bg-white shadow-auri-sm p-4">
+              <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{l}</div>
+              <div className="text-2xl font-mono font-bold" style={{ color: cor }}>{n}</div>
+              <div className="text-xs font-mono text-stone-600 mt-1">{fmtBRL(v)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Seção 1: Receitas em atraso */}
+      <div className="border border-terra-500/40 bg-white shadow-auri-sm mb-6">
+        <div className="px-5 py-3 border-b border-terra-500/30 bg-terra-100/30 flex items-center justify-between">
+          <h3 className="text-xs uppercase tracking-[0.2em] text-terra-600">Receitas em aberto · vencimento passado</h3>
+          <span className="text-xs font-mono text-terra-600">{receitasAtraso.length} ocorrência{receitasAtraso.length !== 1 ? "s" : ""}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-bone border-b border-stone-200">
+              <Th secao="rec" col="nome">Cliente</Th>
+              <Th secao="rec" col="mes">Mês</Th>
+              <Th secao="rec" col="valor" align="right">Valor</Th>
+              <Th secao="rec" col="venc">Vencimento</Th>
+              <Th secao="rec" col="dias" align="right">Atraso</Th>
+            </tr></thead>
+            <tbody>
+              {receitasAtraso.length === 0
+                ? <SecaoVazia msg="Nenhuma receita em atraso identificada." />
+                : ordenar(receitasAtraso, "rec").map((t, i) => (
+                    <LinhaTransacao key={i} t={t} />
+                  ))}
+              <TotalRow lista={receitasAtraso} />
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Seção 2: Despesas não pagas (não débito automático) */}
+      <div className="border border-terra-500/40 bg-white shadow-auri-sm mb-6">
+        <div className="px-5 py-3 border-b border-terra-500/30 bg-terra-100/30 flex items-center justify-between">
+          <h3 className="text-xs uppercase tracking-[0.2em] text-terra-600">Despesas não pagas · sem débito automático</h3>
+          <span className="text-xs font-mono text-terra-600">{despesasNaoPagas.length} ocorrência{despesasNaoPagas.length !== 1 ? "s" : ""}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-bone border-b border-stone-200">
+              <Th secao="desp" col="nome">Cliente</Th>
+              <Th secao="desp" col="mes">Mês</Th>
+              <Th secao="desp" col="valor" align="right">Valor</Th>
+              <Th secao="desp" col="venc">Vencimento</Th>
+              <Th secao="desp" col="dias" align="right">Atraso</Th>
+            </tr></thead>
+            <tbody>
+              {despesasNaoPagas.length === 0
+                ? <SecaoVazia msg="Nenhuma despesa em aberto identificada." />
+                : ordenar(despesasNaoPagas, "desp").map((t, i) => (
+                    <LinhaTransacao key={i} t={t} />
+                  ))}
+              <TotalRow lista={despesasNaoPagas} />
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Seção 3: Débito automático sem confirmação de pagamento */}
+      <div className="border border-sun-400/60 bg-white shadow-auri-sm mb-6">
+        <div className="px-5 py-3 border-b border-sun-400/40 bg-sun-100/30 flex items-center justify-between">
+          <h3 className="text-xs uppercase tracking-[0.2em] text-sun-600">Débito automático · pagamento não confirmado</h3>
+          <span className="text-xs font-mono text-sun-600">{debitoSemConfirmacao.length} ocorrência{debitoSemConfirmacao.length !== 1 ? "s" : ""}</span>
+        </div>
+        <p className="px-5 pt-2 pb-1 text-[11px] text-stone-600">
+          Conta configurada em débito automático. Vencimento já passou mas a Data de Efetivação não foi registrada — confirme junto à Equatorial.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="bg-bone border-b border-stone-200">
+              <Th secao="deb" col="nome">Cliente</Th>
+              <Th secao="deb" col="mes">Mês</Th>
+              <Th secao="deb" col="valor" align="right">Valor</Th>
+              <Th secao="deb" col="venc">Vencimento</Th>
+              <Th secao="deb" col="dias" align="right">Dias s/ confirm.</Th>
+            </tr></thead>
+            <tbody>
+              {debitoSemConfirmacao.length === 0
+                ? <SecaoVazia msg="Nenhum débito automático sem confirmação." />
+                : ordenar(debitoSemConfirmacao, "deb").map((t, i) => (
+                    <LinhaTransacao key={i} t={t} />
+                  ))}
+              <TotalRow lista={debitoSemConfirmacao} />
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function PainelModule() {
   const { data, loading, error, refresh, lastUpdated } = useSheetData();
   const [aba, setAba] = useState("overview");
@@ -2629,6 +2896,7 @@ export default function PainelModule() {
             </NavBtn>
             <NavBtn ativo={aba === "clientes"} onClick={() => setAba("clientes")}>Clientes</NavBtn>
             <NavBtn ativo={aba === "ltv"} onClick={() => setAba("ltv")}>LTV</NavBtn>
+            <NavBtn ativo={aba === "inadimplencia"} onClick={() => setAba("inadimplencia")}>Inadimplência</NavBtn>
           </div>
         </div>
       </header>
@@ -2701,6 +2969,10 @@ export default function PainelModule() {
 
         {aba === "ltv" && (
           <TelaLTV clientes={clientes} onClickCliente={setClienteSel} />
+        )}
+
+        {aba === "inadimplencia" && (
+          <TelaInadimplencia clientes={clientes} onClickCliente={setClienteSel} />
         )}
       </main>
 

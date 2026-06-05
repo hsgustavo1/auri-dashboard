@@ -109,14 +109,28 @@ export function parseRDEquatorial(text) {
   const rows = parseCSV(text);
   return rows
     .map(r => {
-      const uc    = (r["Unidade Consumidora"] || "").trim();
-      const tipo  = (r["Tipo"] || "").trim();
-      const mes   = (r["Mês/Ano"] || "").trim();
-      const valor = parseBR(r["Valor"]) ?? 0;
+      const uc     = (r["Unidade Consumidora"] || "").trim();
+      const tipo   = (r["Tipo"] || "").trim();
+      const mes    = (r["Mês/Ano"] || "").trim();
+      const valor  = parseBR(r["Valor"]) ?? 0;
       const status = (r["Status"] || "").trim();
-      const ug    = (r["Unidade Geradora"] || "").trim();
+      const ug     = (r["Unidade Geradora"] || "").trim();
       if (!uc || !tipo || !mes) return null;
-      return { uc, tipo, mes, valor, status, ug };
+
+      // Campos adicionais para a aba Inadimplência
+      const vencimento   = pickField(r,
+        "Data de Vencimento", "Vencimento", "Data Vencimento", "Data vencimento",
+        "Dt Vencimento", "dt_vencimento") || null;
+      const efetivacao   = pickField(r,
+        "Data de Efetivação", "Data de Efetivacao", "Efetivação", "Efetivacao",
+        "Data Efetivacao", "Data Efetivação", "Dt Efetivação", "Dt Efetivacao") || null;
+      const debRaw       = pickField(r,
+        "Débito Automático", "Debito Automatico", "Débito Auto", "Débito automático",
+        "Debito Auto", "Forma de Pagamento", "Pagamento");
+      const debitoAutomatico = /débito auto|debito auto|automát|sim/i.test(debRaw);
+
+      return { uc, tipo, mes, valor, status, ug, fonte: "rd",
+               vencimento, efetivacao, debitoAutomatico };
     })
     .filter(Boolean);
 }

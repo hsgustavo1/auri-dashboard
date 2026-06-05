@@ -251,8 +251,14 @@ describe("projetarHorizonte", () => {
     status: statusSaldo(saldo, cmc),
   });
 
-  it("retorna null para UC geradora", () => {
-    expect(projetarHorizonte({ ...c(2000, 1000), ehUCGeradora: true }, 10, 3000)).toBeNull();
+  it("retorna null para UC geradora GD2 (saldo preso)", () => {
+    expect(projetarHorizonte({ ...c(2000, 1000), ehUCGeradora: true, tipoGd: "GD2" }, 10, 3000)).toBeNull();
+  });
+
+  it("projeta normalmente para UC geradora GD1 (saldo fluido)", () => {
+    const r = projetarHorizonte({ ...c(2000, 1000), ehUCGeradora: true, tipoGd: "GD1" }, 50, 3000);
+    expect(r).not.toBeNull();
+    expect(r?.tipo).toBeDefined();
   });
 
   it("retorna null para CMC = 0", () => {
@@ -264,9 +270,24 @@ describe("projetarHorizonte", () => {
     expect(r?.tipo).toBe("ja_critico");
   });
 
-  it("ja_excessivo quando saldo > 6× CMC", () => {
-    const r = projetarHorizonte(c(7000, 1000), 10, 3000);
+  it("ja_excessivo quando saldo > 6× CMC e não drena", () => {
+    // recebe = 40%*3000 = 1200, net = +200 → acumula, segue excessivo hoje
+    const r = projetarHorizonte(c(7000, 1000), 40, 3000);
     expect(r?.tipo).toBe("ja_excessivo");
+  });
+
+  it("recuperando quando crítico hoje mas a nova alocação acumula", () => {
+    // saldo 400 < 0.5×CMC, recebe = 50%*3000 = 1500, net = +500 → recupera
+    const r = projetarHorizonte(c(400, 1000), 50, 3000);
+    expect(r?.tipo).toBe("recuperando");
+    expect(r?.meses).toBeGreaterThan(0);
+  });
+
+  it("normalizando quando excessivo hoje mas a nova alocação drena", () => {
+    // saldo 7000 > 6×CMC, recebe = 10%*3000 = 300, net = -700 → normaliza
+    const r = projetarHorizonte(c(7000, 1000), 10, 3000);
+    expect(r?.tipo).toBe("normalizando");
+    expect(r?.meses).toBeGreaterThan(0);
   });
 
   it("ate_critico quando recebe menos do que consome", () => {

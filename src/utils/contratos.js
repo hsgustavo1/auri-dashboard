@@ -5,8 +5,6 @@ import Docxtemplater from "docxtemplater";
 // Usa os modelos .docx (com campos {{...}}) servidos de /contratos-modelos/ e
 // preenche com o registro revisado. 100% client-side (pdf-lib-style, mas .docx).
 
-// Modelos disponíveis. tpl* = caminho do template por tipo de pessoa.
-// pronto:false → ainda sem template (botão fica desabilitado na UI).
 export const CONTRATOS = [
   {
     id: "adesao", nome: "Termo de Adesão (Consórcio)", pronto: true,
@@ -14,12 +12,12 @@ export const CONTRATOS = [
     tplPJ: "/contratos-modelos/adesao-pj.docx",
   },
   {
-    id: "locacao", nome: "Locação de Equipamento", pronto: false,
+    id: "locacao", nome: "Locação de Equipamento", pronto: true,
     tplPF: "/contratos-modelos/locacao-equip-pf.docx",
     tplPJ: "/contratos-modelos/locacao-equip-pj.docx",
   },
   {
-    id: "aluguel", nome: "Locação de Imóvel", pronto: false,
+    id: "aluguel", nome: "Locação de Imóvel", pronto: true,
     tplPF: "/contratos-modelos/aluguel-pf.docx",
     tplPJ: "/contratos-modelos/aluguel-pj.docx",
   },
@@ -27,6 +25,37 @@ export const CONTRATOS = [
 
 function txt(v) {
   return v == null || v === "" ? "" : String(v);
+}
+
+function formatBRL(n) {
+  if (n == null || n === "" || isNaN(n)) return "";
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(Number(n));
+}
+
+// Converte inteiro para palavras em português (até 999.999).
+function numExtenso(n) {
+  if (n == null || n === "" || isNaN(n)) return "";
+  n = Math.round(Number(n));
+  if (n === 0) return "zero";
+  const uns = ["","um","dois","três","quatro","cinco","seis","sete","oito","nove",
+               "dez","onze","doze","treze","quatorze","quinze","dezesseis","dezessete","dezoito","dezenove"];
+  const dez = ["","","vinte","trinta","quarenta","cinquenta","sessenta","setenta","oitenta","noventa"];
+  const cen = ["","cento","duzentos","trezentos","quatrocentos","quinhentos",
+               "seiscentos","setecentos","oitocentos","novecentos"];
+  function sub1000(x) {
+    if (x === 100) return "cem";
+    const c = Math.floor(x / 100), r = x % 100;
+    const sub = r === 0 ? "" : r < 20 ? uns[r]
+      : r % 10 === 0 ? dez[Math.floor(r / 10)]
+      : dez[Math.floor(r / 10)] + " e " + uns[r % 10];
+    if (c === 0) return sub;
+    return r === 0 ? cen[c] : cen[c] + " e " + sub;
+  }
+  const mil = Math.floor(n / 1000), resto = n % 1000;
+  if (mil === 0) return sub1000(n);
+  const parMil = mil === 1 ? "um mil" : sub1000(mil) + " mil";
+  if (resto === 0) return parMil;
+  return parMil + " e " + sub1000(resto);
 }
 
 // Achata o registro (schema v1.1) nos placeholders {{...}} usados nos templates.
@@ -74,7 +103,14 @@ export function montarDadosContrato(reg) {
     rep_qualificacao: txt(r.qualificacao),
     rep_endereco: txt(r.endereco),
     aluguel_valor_mensal: txt(al.valor_mensal),
+    aluguel_valor_mensal_fmt: formatBRL(al.valor_mensal),
+    aluguel_valor_mensal_extenso: al.valor_mensal ? numExtenso(al.valor_mensal) + " reais" : "",
     aluguel_prazo_meses: txt(al.prazo_meses),
+    aluguel_prazo_extenso: numExtenso(al.prazo_meses),
+    aluguel_valor_total_fmt: (al.valor_mensal && al.prazo_meses)
+      ? formatBRL(al.valor_mensal * al.prazo_meses) : "",
+    aluguel_valor_total_extenso: (al.valor_mensal && al.prazo_meses)
+      ? numExtenso(al.valor_mensal * al.prazo_meses) + " reais" : "",
     aluguel_data_inicio: txt(al.data_inicio),
     aluguel_imovel_endereco: txt(al.endereco_imovel),
   };

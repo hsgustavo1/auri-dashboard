@@ -15,17 +15,31 @@ const ETAPAS = [
   { id: "contratos", label: "Contratos", icon: FileSignature },
 ];
 
-// Registro vazio para cadastro 100% manual (schema v1.1).
+// Registro vazio para cadastro 100% manual (schema v1.2).
+const hojeStr = () => {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()}`;
+};
 const REGISTRO_VAZIO = {
-  schema_version: "1.1",
+  schema_version: "1.2",
   tipo_pessoa: "PF",
-  titular: { nome_ou_razao: "", cpf_cnpj: "", rg: "", rg_orgao: "", nacionalidade: "", data_nascimento: "", estado_civil: null, profissao: null, email: null, telefone: null },
+  titular: {
+    nome_ou_razao: "", cpf_cnpj: "", rg: "", rg_orgao: "",
+    nacionalidade: "", data_nascimento: "", estado_civil: null,
+    profissao: null, email: null, telefone: null,
+  },
   representante_legal: null,
+  contato: { usar_titular: false, usar_representante: false, nome: null, telefone: null, email: null },
   endereco: { logradouro: "", numero: "", complemento: "", bairro: "", municipio: "", uf: "", cep: "" },
-  unidade_consumidora: { uc: "", classe: "", modalidade: "", distribuidora: "", tipo_fornecimento: "" },
+  unidade_consumidora: { uc: "", distribuidora: "", tipo_fornecimento: "" },
   consumo: { consumo_medio_kwh: null, historico_kwh: [], ja_possui_gd: false, scee: null },
-  comercial: { desconto_garantido_pct: null, ug: "", energia_contratada_kwh_ano: null, numero_contrato: null },
-  aluguel_imovel: null,
+  comercial: { desconto_garantido_pct: null, energia_contratada_kwh_ano: null, numero_contrato: null },
+  aluguel_imovel: {
+    valor_mensal: null, prazo_meses: null, data_inicio: hojeStr(),
+    copiar_endereco: false,
+    logradouro: "", numero: "", complemento: "", bairro: "", municipio: "", uf: "", cep: "",
+  },
   validacoes: {},
 };
 
@@ -87,6 +101,7 @@ function Stepper({ etapaAtual, onIr, habilitadas }) {
 export default function DocsModule() {
   const [etapa, setEtapa] = useState("documentos");
   const [registro, setRegistro] = useState(null);
+  const [fonte, setFonte] = useState(null); // { tipo: "local"|"nuvem", valor: string }
 
   // Revisão sempre liberada; Contratos quando já há cadastro iniciado.
   const habilitadas = new Set(["documentos", "revisao", ...(registro ? ["contratos"] : [])]);
@@ -123,6 +138,7 @@ export default function DocsModule() {
           onExtracaoCarregada={carregarRegistro}
           onUsarExemplo={() => carregarRegistro(structuredClone(EXEMPLO))}
           onCadastrarManual={irParaRevisao}
+          onFonteChange={setFonte}
         />
       )}
 
@@ -135,7 +151,7 @@ export default function DocsModule() {
           <button onClick={() => setEtapa("revisao")} className="flex items-center gap-1 text-xs text-stone-600 hover:text-forest-700 uppercase tracking-[0.16em] mb-5">
             <ChevronLeft size={14} /> Voltar à revisão
           </button>
-          <GeracaoContratos registro={registro} />
+          <GeracaoContratos registro={registro} fonte={fonte} />
         </div>
       )}
     </main>
