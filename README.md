@@ -115,12 +115,12 @@ Planilha Google Sheets publicada como CSV (configurada em `src/config.js`):
 | `clientes` | Cadastro (UC, nome, UG, desconto, CPF/CNPJ, endereço/classe). **Coluna N (Geradora):** valor `"INATIVO"` exclui o cliente do painel. Clientes inativos são filtrados em `parseClientes` e nunca entram no array `clientes`. |
 | `scAnalitico` | Rateio atual (col E), média de consumo (col F), histórico de saldo |
 | `infoGerais` | Capacidade instalada e ocupação atual de cada UG |
-| `rdEquatorial` | Receitas e despesas por UC × mês: cobranças ao cliente (Receita) e faturas Equatorial pagas pela Auri (Despesa), com status Pago/Recebido/pendente |
-| `legado` | Histórico anterior à adoção do `rdEquatorial`. Cada linha = UC × mês, com `Valor a cobrar (R$)` (col L = Receita), `Valor real da fatura (R$)` (col M = Despesa) e `Consumo líquido após disponibilidade` (col G = kWh entregue). `parseLegado` converte para o mesmo formato `{ uc, tipo, mes, valor, status, kwh }`. `mergeTransacoes` prioriza `rdEquatorial` em conflito de `(uc, mes, tipo)`. |
+| `rdEquatorial` | Receitas e despesas por UC × mês: cobranças ao cliente (Receita) e faturas Equatorial pagas pela Auri (Despesa), com status Pago/Recebido/pendente. **Fallback de valor:** quando a coluna `Valor` está vazia, `parseRDEquatorial` usa `Valor da Nota` (não sobrescreve `0,00` explícito nem valor já preenchido). |
+| `legado` | Histórico anterior à adoção do `rdEquatorial`. Cada linha = UC × mês, com `Valor a cobrar (R$)` (col L = Receita), `Valor real da fatura (R$)` (col M = Despesa), `Consumo líquido após disponibilidade` (col G) e `Soma de kWh Simultaneidade` (col S). O **kWh entregue = col G + col S** (consumo + simultaneidade), espelhando o `fatAuri`. `parseLegado` converte para o mesmo formato `{ uc, tipo, mes, valor, status, kwh }`. `mergeTransacoes` prioriza `rdEquatorial` em conflito de `(uc, mes, tipo)` — **preservando o `kwh` do legado** ao sobrescrever uma Receita (o `rdEquatorial` não tem coluna de kWh). |
 
 Geradoras identificadas por código de UC em `UC_GERADORA_NOVA` / `UC_GERADORA_ANTIGA` (`src/config.js`).
 
-**Receita implícita para geradoras:** UCs Geradoras pertencem a sócios-investidores que recebem dividendos. Quando não há Receita explícita no `rdEquatorial` para um mês, a coluna `Fatura Auri (R$)` do `fatAuri` é usada como receita implícita (tratada como recebida). Isso evita subnotificar o LTV das UCs geradoras que não geram saída de caixa direta.
+**Receita implícita para geradoras:** UCs Geradoras pertencem a sócios-investidores que recebem dividendos. Quando não há Receita explícita no `rdEquatorial` para um mês, a coluna `Fatura Auri (R$)` do `fatAuri` é usada como receita implícita (tratada como recebida). Isso evita subnotificar o LTV das UCs geradoras que não geram saída de caixa direta. O `fatAuri` é consultado **mesclando UC antiga + UC nova** (`Object.assign` dos aliases) — antes um `||` descartava os meses sob a UC nova quando a antiga já tinha dados, omitindo a receita implícita das competências pós-renumeração.
 
 ---
 
@@ -282,7 +282,7 @@ auri-dashboard/
 npm install
 npm run dev        # http://localhost:5173
 npm run build      # build de produção em /dist
-npm test           # testes unitários (Vitest) — 115 testes
+npm test           # testes unitários (Vitest) — 138 testes
 npm run lint       # análise estática (ESLint)
 npm run test:watch # modo watch para desenvolvimento
 ```
@@ -383,6 +383,21 @@ Agora os aliases conhecidos são mesclados por mês antes da montagem de `consum
 
 ---
 
+## Auditoria de qualidade de dados (jun/2026)
+
+Auditoria completa do pipeline financeiro contra os dados ao vivo da Auribase. Quatro correções, todas cobertas por testes:
+
+1. **Receita `Valor` vazio → `Valor da Nota`** (`parseRDEquatorial`). 27 receitas (sobretudo a competência 08/2025, em ~24 clientes) tinham a coluna `Valor` vazia e o valor real só em `Valor da Nota`, sendo contabilizadas como **R$ 0,00**. Total recuperado: **R$ 12.462,57**. O fallback só atua quando `Valor` está vazio — não sobrescreve `0,00` explícito.
+2. **kWh do legado preservado no merge** (`mergeTransacoes`). Quando o `rdEquatorial` sobrescrevia uma Receita do legado, o `kwh` anexado era perdido (o `rdEquatorial` não tem coluna de kWh), subnotificando o consumo total em meses sem `fatAuri`. Afetava **21 clientes**. O merge agora copia o `kwh` do legado para a entrada vencedora.
+3. **Receita implícita sob UC nova** (`buildFinanceiro`). `fatData[uc_antiga] || fatData[uc]` descartava os meses do `fatAuri` registrados sob a UC **nova** quando a antiga já tinha dados. Afetava **5 geradores** (Emerson, Alessandro, Daniela, Lana, Cercados) — os que dependem de dividendo implícito (Taliton e Luz lançam Receita explícita no `rdEquatorial`, logo não foram tocados). Corrigido com `Object.assign` mesclando os aliases.
+4. **Simultaneidade do legado** (`parseLegado`). O kWh legado somava só o consumo (col G); agora soma também `Soma de kWh Simultaneidade` (col S). Afeta os **7 geradores** (clientes comuns têm simultaneidade 0): +19.240 kWh somados à base.
+
+### DetalheCliente — card de métricas
+
+No modal do cliente, o campo **"Emite cobrança"** (redundante) foi removido; **"Status"** assumiu a posição dele, e a posição liberada passou a exibir **"Consumo total (kWh)"** = consumo + simultaneidade de toda a vida do cliente (`financeiro.consumoRealKwh`, já com as correções 2 e 4).
+
+---
+
 ## Decisões de Design
 
 - **Carregamento é o objetivo; soma=100% é restrição.** Redistribuir % não muda o carregamento (só a saúde de saldo). Carregamento só muda adicionando/removendo demanda (órfãs/swaps).
@@ -417,9 +432,9 @@ cliente.financeiro = {
 
 **Join de UC:** `rdEquatorial` usava código antigo até mar/2025, novo a partir de abr/2025. `buildFinanceiro` tenta `uc_antiga` primeiro, depois `uc` (novo). Um cliente pode ter transações nos dois formatos — todas são consolidadas.
 
-**Dados legados:** a aba `legado` contém histórico anterior ao `rdEquatorial`. `parseLegado` converte cada linha em transações `Receita` e `Despesa` (status fixo `Recebido`/`Pago`). `mergeTransacoes(rdEquatorial, legado)` descarta registros legados onde `(uc, mes, tipo)` já existe no `rdEquatorial` — garantindo prioridade para o dado mais recente. O campo `kwh` (col G = `Consumo líquido após disponibilidade`) é armazenado em cada transação legada e usado na tela LTV para calcular `consumoKwh` em meses não cobertos pelo `consumoArr` (S_C_Analitico), evitando que o R$/kWh global seja inflado por denominador incompleto.
+**Dados legados:** a aba `legado` contém histórico anterior ao `rdEquatorial`. `parseLegado` converte cada linha em transações `Receita` e `Despesa` (status fixo `Recebido`/`Pago`). O campo `kwh` = `Consumo líquido após disponibilidade` (col G) **+ `Soma de kWh Simultaneidade` (col S)** — espelha o total entregue do `fatAuri` (consumo + simultaneidade). `mergeTransacoes(rdEquatorial, legado)` descarta registros legados onde `(uc, mes, tipo)` já existe no `rdEquatorial` — garantindo prioridade para o dado mais recente — mas **copia o `kwh` do legado para a Receita do `rdEquatorial` que o sobrescreveu** (o `rdEquatorial` não traz kWh). O `kwh` é usado na tela LTV / no card do cliente para calcular o consumo total em meses não cobertos pelo `consumoArr` (S_C_Analitico), evitando que o R$/kWh global seja inflado por denominador incompleto.
 
-**Receita implícita de geradoras:** após processar as transações do `rdEquatorial`, para cada UC Geradora verifica meses sem Receita explícita e injeta a `Fatura Auri (R$)` do `fatAuri` como `status: "Implícita"` — contabilizada em `receitaPago` (dividendo = recebido).
+**Receita implícita de geradoras:** após processar as transações do `rdEquatorial`, para cada UC Geradora verifica meses sem Receita explícita e injeta a `Fatura Auri (R$)` do `fatAuri` (mesclando aliases UC antiga + nova) como `status: "Implícita"` — contabilizada em `receitaPago` (dividendo = recebido).
 
 **Ratio Rec/Desp:** exibido na coluna final da tabela LTV. Cores: verde ≥ 2×, âmbar 1–2×, vermelho < 1×.
 

@@ -548,11 +548,11 @@ function DetalheCliente({ cliente, ugsValidadas, planoGlobal, estoque12m, onClos
               ["Saldo atual", `${(cliente.saldo||0).toFixed(0)} kWh`],
               ["CMC", `${(cliente.cmc||0).toFixed(0)} kWh`],
               ["Colchão ideal (2×)", `${(cliente.colchaoIdeal||0).toFixed(0)} kWh`],
-              ["Status", cliente.status.label, cliente.status.cor],
+              ["Consumo total (kWh)", `${(cliente.financeiro?.consumoRealKwh || 0).toFixed(0)} kWh`],
               ["% Rateio", `${cliente.rateio_pct}%`],
               ["Desconto contratual", `${cliente.desconto_pct}%`],
               ["Razão saldo/CMC", `${(cliente.status.razao||0).toFixed(2)}×`, cliente.status.cor],
-              ["Emite cobrança", cliente.emite_cobranca ? "SIM" : "NÃO"],
+              ["Status", cliente.status.label, cliente.status.cor],
             ].map(([l, v, c]) => (
               <div key={l} className="border-l-2 border-stone-200 pl-3">
                 <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{l}</div>

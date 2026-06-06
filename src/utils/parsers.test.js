@@ -70,12 +70,48 @@ describe("parseLegado", () => {
     expect(zeros).toHaveLength(0);
   });
 
-  it("inclui kwh da coluna G em cada transação", () => {
+  it("inclui kwh da coluna G em cada transação (sem coluna de simultaneidade)", () => {
     const result = parseLegado(CSV);
     const rec = result.find(t => t.mes === "03/2023" && t.tipo === "Receita");
     const desp = result.find(t => t.mes === "03/2023" && t.tipo === "Despesa");
     expect(rec.kwh).toBeCloseTo(350);
     expect(desp.kwh).toBeCloseTo(350);
+  });
+
+  it("soma consumo (col G) + simultaneidade (col S) no kwh", () => {
+    const csv = `Unidade Consumidora,Cliente,Mês de referência da fatura,Ano de referência da fatura,Consumo líquido após disponibilidade,Valor a cobrar (R$),Valor real da fatura (R$),Soma de kWh Simultaneidade
+10020459279,João,3,2023,"350,00","1.250,50","980,00","260,00"
+10020459279,João,4,2023,"280,00","1.100,00","900,00",0`;
+    const result = parseLegado(csv);
+    const rec3 = result.find(t => t.mes === "03/2023" && t.tipo === "Receita");
+    const rec4 = result.find(t => t.mes === "04/2023" && t.tipo === "Receita");
+    expect(rec3.kwh).toBeCloseTo(610);  // 350 + 260
+    expect(rec4.kwh).toBeCloseTo(280);  // 280 + 0
+  });
+});
+
+import { parseRDEquatorial } from "./parsers.js";
+
+describe("parseRDEquatorial — fallback Valor → Valor da Nota", () => {
+  const CSV = `Unidade Consumidora,Tipo,Mês/Ano,Valor,Status,Unidade Geradora,Valor da Nota
+111,Receita,08/2025,,Recebido,Alessandro,"783,04"
+222,Receita,09/2025,"500,00",Recebido,Alessandro,"480,00"
+333,Receita,10/2025,"0,00",Recebido,Alessandro,"200,00"
+444,Despesa,08/2025,"90,00",Pago,Alessandro,N/A`;
+
+  it("usa Valor da Nota quando Valor está vazio", () => {
+    const t = parseRDEquatorial(CSV).find(x => x.uc === "111");
+    expect(t.valor).toBeCloseTo(783.04);
+  });
+
+  it("não sobrescreve um Valor já preenchido", () => {
+    const t = parseRDEquatorial(CSV).find(x => x.uc === "222");
+    expect(t.valor).toBeCloseTo(500.0);
+  });
+
+  it("não sobrescreve um 0,00 explícito (só vazio)", () => {
+    const t = parseRDEquatorial(CSV).find(x => x.uc === "333");
+    expect(t.valor).toBe(0);
   });
 });
 

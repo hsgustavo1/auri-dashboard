@@ -1339,10 +1339,30 @@ export function analisarCenario(cenario, n = 6) {
 // Combina transações de rdEquatorial e de dados legados.
 // R_D_Equatorial tem prioridade: qualquer par (uc, mes, tipo) presente
 // nela descarta o equivalente legado.
+// Preservação de kWh: quando o R_D sobrescreve uma Receita do legado que
+// carrega kWh (coluna G do legado), o valor é copiado para a entrada do R_D
+// — caso contrário esse mês ficaria sem kWh (R_D não tem coluna de kWh).
 export function mergeTransacoes(rdEquatorial, legado) {
+  // Mapa de kWh do legado por (uc|mes) para enriquecer entradas do R_D
+  const legadoKwhMap = {};
+  legado.forEach(t => {
+    if (t.tipo === "Receita" && t.kwh > 0)
+      legadoKwhMap[`${t.uc}|${t.mes}`] = t.kwh;
+  });
+
   const chaves = new Set(rdEquatorial.map(t => `${t.uc}|${t.mes}|${t.tipo}`));
   const legadoFiltrado = legado.filter(t => !chaves.has(`${t.uc}|${t.mes}|${t.tipo}`));
-  return [...rdEquatorial, ...legadoFiltrado];
+
+  // Enriquece Receitas do R_D com o kWh do legado que elas substituíram
+  const rdEnriquecido = rdEquatorial.map(t => {
+    if (t.tipo === "Receita" && !(t.kwh > 0)) {
+      const kwh = legadoKwhMap[`${t.uc}|${t.mes}`];
+      if (kwh) return { ...t, kwh };
+    }
+    return t;
+  });
+
+  return [...rdEnriquecido, ...legadoFiltrado];
 }
 
 // ─── buildFinanceiro ─────────────────────────────────────────
@@ -1388,8 +1408,12 @@ export function buildFinanceiro(clientes, transacoes, fatData = {}) {
     const mesesComReceita = new Set(
       f.transacoes.filter(t => t.tipo === "Receita").map(t => t.mes)
     );
-    // BD_FatAuri pode usar UC antiga ou nova como chave
-    const fatUC = fatData[c.uc_antiga] || fatData[c.uc] || {};
+    // BD_FatAuri pode usar UC antiga ou nova como chave — e pode mudar no meio
+    // do histórico (ex: primeiros meses sob UC antiga, meses recentes sob UC nova).
+    // O || simples descartava todos os meses da UC nova quando a UC antiga
+    // já tinha dados. Merge explícito garante que ambas sejam consultadas.
+    const aliases = [...new Set([c.uc_antiga, c.uc].filter(Boolean))];
+    const fatUC = Object.assign({}, ...aliases.map(uc => fatData[uc] || {}));
     Object.entries(fatUC).forEach(([mes, { faturaAuri }]) => {
       if (!faturaAuri || faturaAuri <= 0) return;
       if (mesesComReceita.has(mes)) return;
@@ -1418,10 +1442,15 @@ export function buildFinanceiro(clientes, transacoes, fatData = {}) {
       if (v != null) { cobertos.add(m); return s + v; }
       return s;
     }, 0);
+    // Fallback de kWh para meses não cobertos pelo BD_FatAuri: aceita kWh de
+    // qualquer Receita nas transações (legado nativo ou R_D enriquecido via
+    // mergeTransacoes). A condição `!cobertos.has` garante que BD_FatAuri tem
+    // prioridade e não há dupla contagem.
     f.transacoes.forEach(t => {
-      if (t.fonte !== "legado" || t.tipo !== "Receita") return;
+      if (t.tipo !== "Receita" || !(t.kwh > 0)) return;
       if (cobertos.has(t.mes)) return;
-      if (t.kwh > 0) { kwhReal += t.kwh; cobertos.add(t.mes); }
+      kwhReal += t.kwh;
+      cobertos.add(t.mes);
     });
     f.consumoRealKwh = kwhReal;
     f.rsPorKwh = kwhReal > 0 ? f.ltv / kwhReal : null;

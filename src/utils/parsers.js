@@ -113,7 +113,16 @@ export function parseRDEquatorial(text) {
       const uc     = (r["Unidade Consumidora"] || "").trim();
       const tipo   = (r["Tipo"] || "").trim();
       const mes    = (r["Mês/Ano"] || "").trim();
-      const valor  = parseBR(r["Valor"]) ?? 0;
+      // Valor da transação. Quando a coluna "Valor" está VAZIA (não preenchida),
+      // usa "Valor da Nota" como fallback — caso comum em receitas onde só a nota
+      // fiscal foi lançada (ex: competência 08/2025 em boa parte da base). Não
+      // sobrescreve um "0,00" explícito nem um Valor já preenchido.
+      let valor = parseBR(r["Valor"]);
+      if (valor == null) {
+        const valorNota = parseBR(r["Valor da Nota"]);
+        if (valorNota != null && valorNota > 0) valor = valorNota;
+      }
+      valor = valor ?? 0;
       const status = (r["Status"] || "").trim();
       const ug     = (r["Unidade Geradora"] || "").trim();
       if (!uc || !tipo || !mes) return null;
@@ -147,7 +156,12 @@ export function parseLegado(text) {
     const mes = `${String(mesNum).padStart(2, "0")}/${ano}`;
     const receita = parseBR(r["Valor a cobrar (R$)"]) ?? 0;
     const despesa = parseBR(r["Valor real da fatura (R$)"]) ?? 0;
-    const kwh = parseBR(r["Consumo líquido após disponibilidade"]) ?? 0;
+    // kWh total entregue = consumo líquido (col G) + simultaneidade (col S),
+    // espelhando o BD_FatAuri (consumo + simultaneidade). A coluna de
+    // simultaneidade foi adicionada ao legado; antes só o consumo era somado.
+    const kwhConsumo = parseBR(r["Consumo líquido após disponibilidade"]) ?? 0;
+    const kwhSimult  = parseBR(r["Soma de kWh Simultaneidade"]) ?? 0;
+    const kwh = kwhConsumo + kwhSimult;
     if (receita > 0) {
       transacoes.push({ uc, tipo: "Receita", mes, valor: receita, status: "Recebido", fonte: "legado", kwh });
     }
