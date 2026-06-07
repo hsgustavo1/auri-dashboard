@@ -186,6 +186,7 @@ export function buildClientes(scData, fatData, clientesBase) {
       bairro: base.bairro,
       cidade: base.cidade,
       classe: base.classe,
+      analista: base.analista || "",
       rateio_pct: base.inativo ? 0 : (sc.rateio_pct !== undefined ? sc.rateio_pct : 0),
       cmc,
       cmcRecente: cmcRec,

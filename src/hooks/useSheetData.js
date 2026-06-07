@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { SHEET_URLS } from "../config";
 import { buildDataset } from "../utils/dataset";
 import { parseHistorico } from "../utils/parsers";
+import { parseResultadosCSV } from "../utils/parseResultados";
 
 async function fetchCSV(url) {
   const res = await fetch(url);
@@ -37,7 +38,18 @@ export function useSheetData() {
         console.warn("[useSheetData] histórico indisponível:", e.message);
       }
 
-      setState({ data: { clientes, ugsValidadas, planoGlobal, historico }, loading: false, error: null, lastUpdated: new Date() });
+      // Resultados por UG: fonte opcional, mesma estratégia do histórico.
+      // ugResults=null sinaliza "ainda sem dados" para YieldView usar fallback estático.
+      let resultados = { ugResults: null, distributions: [], fonte: "static" };
+      try {
+        const parsed = parseResultadosCSV(await fetchCSV(SHEET_URLS.resultados));
+        if (parsed.ugResults.length < 7) throw new Error(`layout inesperado (${parsed.ugResults.length} linhas)`);
+        resultados = { ...parsed, fonte: "csv" };
+      } catch (e) {
+        console.warn("[useSheetData] resultados indisponível:", e.message);
+      }
+
+      setState({ data: { clientes, ugsValidadas, planoGlobal, historico, resultados }, loading: false, error: null, lastUpdated: new Date() });
     } catch (err) {
       setState(s => ({ ...s, loading: false, error: err.message }));
     }

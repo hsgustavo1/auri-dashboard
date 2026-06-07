@@ -6,6 +6,7 @@ export const SHEET_URLS = {
   rdEquatorial: "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=357354459&single=true&output=csv",
   legado:       "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=395095854&single=true&output=csv",
   historico:    "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=322053351&single=true&output=csv",
+  resultados:   "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=527983481&single=true&output=csv",
 };
 
 export const TIPO_GD = {

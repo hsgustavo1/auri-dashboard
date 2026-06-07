@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { RefreshCw, FileText } from "lucide-react";
+import YieldView from "./YieldView";
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "../../hooks/useSheetData";
 import {
@@ -2699,6 +2700,8 @@ function fmtData(str) {
 function TelaInadimplencia({ clientes, onClickCliente }) {
   const [ord, setOrd] = useState({ secao: null, col: "dias", dir: "desc" });
   const [expandedUCs, setExpandedUCs] = useState({});
+  const [filtroUG, setFiltroUG] = useState("");
+  const [filtroAnalista, setFiltroAnalista] = useState("");
   const toggleOrd = (secao, col) =>
     setOrd(prev => prev.secao === secao && prev.col === col
       ? { secao, col, dir: prev.dir === "desc" ? "asc" : "desc" }
@@ -2708,6 +2711,21 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
 
   // Classificação compartilhada com o snapshot de indicadores (anti-drift).
   const { receitasAtraso, despesasNaoPagas, debitoSemConfirmacao } = coletarInadimplencia(clientes);
+
+  const todasTxs = [...receitasAtraso, ...despesasNaoPagas, ...debitoSemConfirmacao];
+  const ugsDisponiveis = [...new Set(todasTxs.map(t => t.cliente?.ug).filter(Boolean))].sort();
+  const analistasDisponiveis = [...new Set(todasTxs.map(t => t.cliente?.analista).filter(Boolean))].sort();
+  const temSemUG = todasTxs.some(t => !t.cliente?.ug);
+  const temSemAnalista = todasTxs.some(t => !t.cliente?.analista);
+  function filtrar(lista) {
+    return lista.filter(t =>
+      (!filtroUG || (filtroUG === "__sem__" ? !t.cliente?.ug : t.cliente?.ug === filtroUG)) &&
+      (!filtroAnalista || (filtroAnalista === "__sem__" ? !t.cliente?.analista : t.cliente?.analista === filtroAnalista))
+    );
+  }
+  const recFilt  = filtrar(receitasAtraso);
+  const despFilt = filtrar(despesasNaoPagas);
+  const debFilt  = filtrar(debitoSemConfirmacao);
 
   function corDias(dias) {
     return dias == null ? "#a89e89" : dias > 30 ? "#a8482a" : dias > 7 ? "#c98a1f" : "#6b6357";
@@ -2745,9 +2763,9 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
     });
   }
 
-  const totalRecAtr = receitasAtraso.reduce((s, t) => s + t.valor, 0);
-  const totalDespNP = despesasNaoPagas.reduce((s, t) => s + t.valor, 0);
-  const totalDebAuto = debitoSemConfirmacao.reduce((s, t) => s + t.valor, 0);
+  const totalRecAtr = recFilt.reduce((s, t) => s + t.valor, 0);
+  const totalDespNP = despFilt.reduce((s, t) => s + t.valor, 0);
+  const totalDebAuto = debFilt.reduce((s, t) => s + t.valor, 0);
   const nAlerts = receitasAtraso.length + despesasNaoPagas.length + debitoSemConfirmacao.length;
 
   function Th({ secao, col, children, align = "left" }) {
@@ -2882,9 +2900,9 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
       ) : (
         <div className="grid grid-cols-3 gap-4 mb-8">
           {[
-            ["Receitas em atraso", receitasAtraso.length, totalRecAtr, "#a8482a"],
-            ["Despesas não pagas", despesasNaoPagas.length, totalDespNP, "#a8482a"],
-            ["Débito auto. s/ confirmação", debitoSemConfirmacao.length, totalDebAuto, "#c98a1f"],
+            ["Receitas em atraso", recFilt.length, totalRecAtr, "#a8482a"],
+            ["Despesas não pagas", despFilt.length, totalDespNP, "#a8482a"],
+            ["Débito auto. s/ confirmação", debFilt.length, totalDebAuto, "#c98a1f"],
           ].map(([l, n, v, cor]) => (
             <div key={l} className="border border-stone-200 bg-white shadow-auri-sm p-4">
               <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-1">{l}</div>
@@ -2895,11 +2913,51 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
         </div>
       )}
 
+      {/* Filtros */}
+      {nAlerts > 0 && (ugsDisponiveis.length + (temSemUG ? 1 : 0) > 1 || analistasDisponiveis.length > 0 || temSemAnalista) && (
+        <div className="flex flex-wrap gap-4 mb-6 items-center">
+          {(ugsDisponiveis.length + (temSemUG ? 1 : 0) > 1) && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-stone-500">UG</span>
+              <select
+                value={filtroUG}
+                onChange={e => setFiltroUG(e.target.value)}
+                className="text-xs border border-stone-200 bg-white px-2 py-1 text-stone-700 focus:outline-none focus:border-stone-400"
+              >
+                <option value="">Todas</option>
+                {ugsDisponiveis.map(ug => <option key={ug} value={ug}>{ug}</option>)}
+                {temSemUG && <option value="__sem__">Sem UG</option>}
+              </select>
+            </div>
+          )}
+          {(analistasDisponiveis.length > 0 || temSemAnalista) && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.18em] text-stone-500">Analista</span>
+              <select
+                value={filtroAnalista}
+                onChange={e => setFiltroAnalista(e.target.value)}
+                className="text-xs border border-stone-200 bg-white px-2 py-1 text-stone-700 focus:outline-none focus:border-stone-400"
+              >
+                <option value="">Todos</option>
+                {analistasDisponiveis.map(a => <option key={a} value={a}>{a}</option>)}
+                {temSemAnalista && <option value="__sem__">Sem analista vinculado</option>}
+              </select>
+            </div>
+          )}
+          {(filtroUG || filtroAnalista) && (
+            <button
+              onClick={() => { setFiltroUG(""); setFiltroAnalista(""); }}
+              className="text-[10px] text-stone-400 hover:text-stone-600 underline"
+            >limpar filtros</button>
+          )}
+        </div>
+      )}
+
       {/* Seção 1: Receitas em atraso */}
       <div className="border border-terra-500/40 bg-white shadow-auri-sm mb-6">
         <div className="px-5 py-3 border-b border-terra-500/30 bg-terra-100/30 flex items-center justify-between">
           <h3 className="text-xs uppercase tracking-[0.2em] text-terra-600">Receitas em aberto · vencimento passado</h3>
-          <span className="text-xs font-mono text-terra-600">{receitasAtraso.length} ocorrência{receitasAtraso.length !== 1 ? "s" : ""}</span>
+          <span className="text-xs font-mono text-terra-600">{recFilt.length} ocorrência{recFilt.length !== 1 ? "s" : ""}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -2910,7 +2968,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
               <Th secao="rec" col="venc">Vencimento</Th>
               <Th secao="rec" col="dias" align="right">Atraso</Th>
             </tr></thead>
-            <Tbody lista={receitasAtraso} secaoKey="rec" msgVazia="Nenhuma receita em atraso identificada." />
+            <Tbody lista={recFilt} secaoKey="rec" msgVazia="Nenhuma receita em atraso identificada." />
           </table>
         </div>
       </div>
@@ -2919,7 +2977,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
       <div className="border border-terra-500/40 bg-white shadow-auri-sm mb-6">
         <div className="px-5 py-3 border-b border-terra-500/30 bg-terra-100/30 flex items-center justify-between">
           <h3 className="text-xs uppercase tracking-[0.2em] text-terra-600">Despesas não pagas · sem débito automático</h3>
-          <span className="text-xs font-mono text-terra-600">{despesasNaoPagas.length} ocorrência{despesasNaoPagas.length !== 1 ? "s" : ""}</span>
+          <span className="text-xs font-mono text-terra-600">{despFilt.length} ocorrência{despFilt.length !== 1 ? "s" : ""}</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -2930,7 +2988,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
               <Th secao="desp" col="venc">Vencimento</Th>
               <Th secao="desp" col="dias" align="right">Atraso</Th>
             </tr></thead>
-            <Tbody lista={despesasNaoPagas} secaoKey="desp" msgVazia="Nenhuma despesa em aberto identificada." />
+            <Tbody lista={despFilt} secaoKey="desp" msgVazia="Nenhuma despesa em aberto identificada." />
           </table>
         </div>
       </div>
@@ -2939,7 +2997,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
       <div className="border border-sun-400/60 bg-white shadow-auri-sm mb-6">
         <div className="px-5 py-3 border-b border-sun-400/40 bg-sun-100/30 flex items-center justify-between">
           <h3 className="text-xs uppercase tracking-[0.2em] text-sun-600">Débito automático · pagamento não confirmado</h3>
-          <span className="text-xs font-mono text-sun-600">{debitoSemConfirmacao.length} ocorrência{debitoSemConfirmacao.length !== 1 ? "s" : ""}</span>
+          <span className="text-xs font-mono text-sun-600">{debFilt.length} ocorrência{debFilt.length !== 1 ? "s" : ""}</span>
         </div>
         <p className="px-5 pt-2 pb-1 text-[11px] text-stone-600">
           Conta configurada em débito automático. Vencimento já passou mas a Data de Efetivação não foi registrada — confirme junto à Equatorial.
@@ -2953,7 +3011,7 @@ function TelaInadimplencia({ clientes, onClickCliente }) {
               <Th secao="deb" col="venc">Vencimento</Th>
               <Th secao="deb" col="dias" align="right">Dias s/ confirm.</Th>
             </tr></thead>
-            <Tbody lista={debitoSemConfirmacao} secaoKey="deb" msgVazia="Nenhum débito automático sem confirmação." />
+            <Tbody lista={debFilt} secaoKey="deb" msgVazia="Nenhum débito automático sem confirmação." />
           </table>
         </div>
       </div>
@@ -3100,8 +3158,8 @@ export default function PainelModule() {
   };
   const [formularioRateio, setFormularioRateio] = useState(null); // { ug, cenario }
 
-  const { clientes, ugsValidadas, planoGlobal, historico } = data || {
-    clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} }, historico: [],
+  const { clientes, ugsValidadas, planoGlobal, historico, resultados } = data || {
+    clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} }, historico: [], resultados: { ugResults: null, distributions: [] },
   };
 
   const stats = useMemo(() => {
@@ -3184,11 +3242,13 @@ export default function PainelModule() {
             <NavBtn ativo={aba === "ltv"} onClick={() => setAba("ltv")}>LTV</NavBtn>
             <NavBtn ativo={aba === "inadimplencia"} onClick={() => setAba("inadimplencia")}>Inadimplência</NavBtn>
             <NavBtn ativo={aba === "evolucao"} onClick={() => setAba("evolucao")}>Evolução</NavBtn>
+            <NavBtn ativo={aba === "yield"} onClick={() => setAba("yield")}>Yield</NavBtn>
           </div>
         </div>
       </header>
 
       <main className="max-w-[1400px] mx-auto px-6 py-8">
+        {aba !== "yield" && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           <StatBox label="Clientes ativos"   valor={stats.total}      onClick={() => irParaClientes({ atividade: "ativos" })} />
           <StatBox label="Saldo crítico"      valor={stats.criticos}   cor="#a8482a" onClick={() => irParaClientes({ status: "critico" })} />
@@ -3196,6 +3256,7 @@ export default function PainelModule() {
           <StatBox label="Travamento anormal" valor={stats.travados}   cor="#c98a1f" onClick={() => irParaClientes({ especial: "travamento" })} />
           <StatBox label="Sem UG alocada"     valor={stats.semUG}      cor="#2f6690" onClick={() => irParaClientes({ ug: "null" })} />
         </div>
+        )}
 
         {aba === "overview" && <BannerValidacao ugs={ugsValidadas} />}
 
@@ -3262,6 +3323,7 @@ export default function PainelModule() {
           <TelaInadimplencia clientes={clientes} onClickCliente={setClienteSel} />
         )}
         {aba === "evolucao" && <TelaEvolucao historico={historico} />}
+        {aba === "yield" && <YieldView resultados={resultados} loading={loading} refresh={refresh} />}
       </main>
 
       <footer className="border-t border-stone-200 mt-12 py-6">

@@ -212,6 +212,7 @@ export function parseClientes(text) {
         bairro:   pickField(r, "Bairro", "bairro"),
         cidade:   pickField(r, "Cidade", "cidade", "Município", "Municipio"),
         classe:   pickField(r, "Classe", "classe"),
+        analista: pickField(r, "Analista Responsável", "Analista Responsavel", "Analista", "analista") || "",
         inativo,
       };
     })
