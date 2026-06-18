@@ -11,6 +11,8 @@ import {
   carregamentoUG,
   capacidadeEfetivaUG,
   projetarHorizonte,
+  projetarHorizonteUG,
+  urgenciaEfetivaUG,
   rsPorKwhGlobal12m,
   coletarInadimplencia,
   deltaMensal,
@@ -173,23 +175,14 @@ function BannerValidacao({ ugs }) {
 }
 
 // ─── CardUG ──────────────────────────────────────────────────
-// Clientes de uma UG que exigem ação: já em crítico/excessivo hoje, ou que
-// chegam a crítico/excessivo dentro da janela de HORIZONTE_ACAO_MESES.
-// (Recuperando/normalizando NÃO contam — a trajetória já se corrige sozinha.)
-const HORIZONTE_ACAO_MESES = 6;
-function clientesExigemAcao(ug) {
-  const denom = capacidadeEfetivaUG(ug, ug.clientes);
-  if (denom <= 0) return [];
-  return ug.clientes
-    .filter(c => !c.ehUCGeradora && (c.cmc || 0) > 0 && (c.rateio_pct || 0) > 0)
-    .filter(c => {
-      const proj = projetarHorizonte(c, c.rateio_pct || 0, denom);
-      if (!proj) return false;
-      if (proj.tipo === "ja_critico" || proj.tipo === "ja_excessivo") return true;
-      if ((proj.tipo === "ate_critico" || proj.tipo === "ate_excessivo") && proj.meses <= HORIZONTE_ACAO_MESES) return true;
-      return false;
-    });
-}
+// A detecção de "exige ação" e a trajetória agregada vivem em business.js
+// (projetarHorizonteUG / urgenciaEfetivaUG). O card só consome e sinaliza.
+const DIR_COR = { "↗": "#2f7a52", "↘": "#a8482a", "→": "#78716c" };
+const URG = {
+  aja:       { cor: "#a8482a", bg: "bg-terra-100/60", borda: "border-terra-500/40", txt: "text-terra-600", icone: "⚠", label: "Necessário ação" },
+  monitorar: { cor: "#c98a1f", bg: "bg-sun-100/50",   borda: "border-sun-500/40",   txt: "text-sun-600",   icone: "◴", label: "Monitorar" },
+  ok:        null,
+};
 
 function CardUG({ ug, onClick }) {
   const cap = ug.capacidade_kwh || 0;
@@ -198,7 +191,11 @@ function CardUG({ ug, onClick }) {
   const ucGer = ug.clientes.find(c => c.ehUCGeradora);
   const cont = { critico: 0, baixo: 0, ideal: 0, alto: 0, excessivo: 0 };
   ug.clientes.filter(c => !c.ehUCGeradora).forEach(c => { if (cont[c.status.nivel] !== undefined) cont[c.status.nivel]++; });
-  const nAcao = clientesExigemAcao(ug).length;
+
+  const proj = projetarHorizonteUG(ug);
+  const urg = urgenciaEfetivaUG(proj);
+  const ag = proj.agregado;
+  const u = URG[urg.nivel];
 
   return (
     <button onClick={onClick} className="text-left bg-white border border-stone-200 shadow-auri-sm hover:shadow-auri-md hover:-translate-y-0.5 hover:border-forest-300 transition-all rounded-md p-5 relative overflow-hidden">
@@ -219,13 +216,40 @@ function CardUG({ ug, onClick }) {
             {ug.tipo === "GD2" && <span className="ml-2 font-mono text-stone-600">{(ucGer.saldo || 0).toFixed(0)} kWh travados</span>}
           </p>
         )}
-        {nAcao > 0 && (
-          <div className="mb-3 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] px-2 py-1 bg-terra-100/60 text-terra-600 border border-terra-500/40 rounded-sm">
-            <span>⚠</span>
-            <span className="font-semibold">Necessário ação</span>
-            <span className="text-terra-600/80 normal-case tracking-normal">· {nAcao} {nAcao === 1 ? "cliente em crítico/excesso ≤6m" : "clientes em crítico/excesso ≤6m"}</span>
+        {/* Badge de direção agregada (rota atual, sem ação) */}
+        {ag && (
+          <div className="mb-2 flex items-center gap-1.5 text-[11px]">
+            <span className="text-stone-500">Hoje</span>
+            <span className="font-semibold" style={{ color: ag.statusHoje.cor }}>{ag.statusHoje.label}</span>
+            <span className="text-stone-400">→ 6m</span>
+            <span className="font-semibold" style={{ color: ag.statusProjetado.cor }}>{ag.statusProjetado.label}</span>
+            <span className="text-base leading-none" style={{ color: DIR_COR[ag.direcao] }}>{ag.direcao}</span>
+            <span className="text-[9px] text-stone-400 normal-case">· rota atual</span>
           </div>
         )}
+
+        {/* Chip de urgência (reframe auditável) */}
+        {u && (
+          <div className={`mb-3 flex items-center gap-1.5 text-[10px] uppercase tracking-[0.12em] px-2 py-1 ${u.bg} ${u.txt} border ${u.borda} rounded-sm`}>
+            <span>{u.icone}</span>
+            <span className="font-semibold">{u.label}</span>
+            {urg.motivo && <span className="normal-case tracking-normal opacity-80">· {urg.motivo}</span>}
+            {urg.nivel === "monitorar" && urg.original === "aja" && (
+              <span className="ml-auto normal-case tracking-normal text-stone-400" title="Status atual ignorando a trajetória">era: ação</span>
+            )}
+          </div>
+        )}
+
+        {/* Decomposição por cliente (trajetória de saúde) */}
+        {ag && (proj.contagem.corrigindo + proj.contagem.rumoProblema + proj.contagem.paradoFora) > 0 && (
+          <div className="mb-3 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-stone-600">
+            {proj.contagem.corrigindo > 0 && <span><span style={{ color: "#2f7a52" }}>↗</span> {proj.contagem.corrigindo} corrigindo</span>}
+            {proj.contagem.estavel > 0 && <span><span className="text-stone-400">→</span> {proj.contagem.estavel} estáveis</span>}
+            {proj.contagem.rumoProblema > 0 && <span><span style={{ color: "#c98a1f" }}>↘</span> {proj.contagem.rumoProblema} rumo a problema</span>}
+            {proj.contagem.paradoFora > 0 && <span><span style={{ color: "#a8482a" }}>⚠</span> {proj.contagem.paradoFora} parado fora</span>}
+          </div>
+        )}
+
         <div className="mb-3">
           <div className="flex justify-between items-baseline mb-1">
             <span className="text-[10px] uppercase tracking-[0.18em] text-stone-600">Carregamento</span>
@@ -852,6 +876,7 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
   const totalCMC = ug.clientes.reduce((s, c) => s + (c.cmc || 0), 0);
   const cap = ug.capacidade_kwh || 0;
   const car = carregamentoUG(ug.clientes, ug);
+  const agUG = projetarHorizonteUG(ug).agregado;
   const realocacoesUG = (planoGlobal?.realocar || []).filter(r => r.ug_origem === ug.nome || r.ug_destino === ug.nome);
 
   return (
@@ -861,6 +886,16 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
         <div>
           <p className="text-[10px] uppercase tracking-[0.2em] text-stone-600 mb-1">Unidade Geradora <span className="text-sun-500/70 ml-2">{ug.tipo}</span></p>
           <h2 className="text-4xl text-ink" style={{ fontFamily: "Fraunces, serif" }}>{ug.nome}</h2>
+          {agUG && (
+            <div className="flex items-center gap-1.5 text-xs mt-1">
+              <span className="text-stone-500">Hoje</span>
+              <span className="font-semibold" style={{ color: agUG.statusHoje.cor }}>{agUG.statusHoje.label}</span>
+              <span className="text-stone-400">→ 6m</span>
+              <span className="font-semibold" style={{ color: agUG.statusProjetado.cor }}>{agUG.statusProjetado.label}</span>
+              <span className="text-base leading-none" style={{ color: DIR_COR[agUG.direcao] }}>{agUG.direcao}</span>
+              <span className="text-[10px] text-stone-400">· mantendo o rateio atual</span>
+            </div>
+          )}
         </div>
         {ug.erro && (
           <div className="text-right">

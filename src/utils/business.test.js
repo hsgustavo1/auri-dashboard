@@ -21,6 +21,7 @@ import {
   mergeTransacoes,
   computeIndicadores,
   coletarInadimplencia,
+  urgenciaEfetivaUG,
 } from "./business.js";
 
 // ─── Helpers de fixture ────────────────────────────────────────────────────
@@ -711,5 +712,119 @@ describe("deltaMensal", () => {
   it("delta null se algum dos valores for null", () => {
     const h = [{ mes_ref: "2026-04", x: null }, { mes_ref: "2026-05", x: 10 }];
     expect(deltaMensal(h, "x")).toEqual({ atual: 10, delta: null });
+  });
+});
+
+import { bucketTrajetoria, projetarHorizonteUG } from "./business.js";
+
+// helper local: ug com clientes (GD1 → distribuível = capacidade)
+const ugCom = (clientes, { tipo = "GD1", cap = 3000 } = {}) =>
+  ({ nome: "T", tipo, capacidade_kwh: cap, clientes });
+
+describe("bucketTrajetoria", () => {
+  it("mapeia cada tipo de projetarHorizonte para o bucket de saúde", () => {
+    expect(bucketTrajetoria("recuperando")).toBe("corrigindo");
+    expect(bucketTrajetoria("normalizando")).toBe("corrigindo");
+    expect(bucketTrajetoria("estavel")).toBe("estavel");
+    expect(bucketTrajetoria("ate_critico")).toBe("rumoProblema");
+    expect(bucketTrajetoria("ate_excessivo")).toBe("rumoProblema");
+    expect(bucketTrajetoria("ja_critico")).toBe("paradoFora");
+    expect(bucketTrajetoria("ja_excessivo")).toBe("paradoFora");
+  });
+});
+
+describe("projetarHorizonteUG", () => {
+  it("agrega saldo/CMC e dá direção ↗ quando a UG se recupera sob o rateio atual", () => {
+    // 2 clientes críticos mas enchendo (recebe 1500 cada, CMC 1000)
+    const ug = ugCom([
+      cliente("A", 1000, 50, false, 400),
+      cliente("B", 1000, 50, false, 400),
+    ]);
+    const p = projetarHorizonteUG(ug);
+    expect(p.semDados).toBe(false);
+    expect(p.agregado.statusHoje.nivel).toBe("critico");   // razão 800/2000 = 0.4
+    expect(p.agregado.statusProjetado.nivel).toBe("alto");  // (800 + 6·1000)/2000 = 3.4
+    expect(p.agregado.direcao).toBe("↗");
+    expect(p.contagem.corrigindo).toBe(2);
+  });
+
+  it("levanta flag de cliente individual rumo a crítico mesmo com agregado saudável", () => {
+    const ug = ugCom([
+      cliente("A", 1000, 34, false, 2000), // recebe 1020, ~estável, ideal
+      cliente("B", 1000, 10, false, 2000), // recebe 300, drena → ate_critico
+    ]);
+    const p = projetarHorizonteUG(ug);
+    expect(p.agregado.statusHoje.nivel).toBe("ideal");      // razão 4000/2000 = 2
+    expect(p.flagsCriticos.map(c => c.uc)).toEqual(["B"]);
+    expect(p.exigemAcao.map(c => c.uc)).toEqual(["B"]);
+  });
+
+  it("marca semDados quando não há distribuível ou beneficiários", () => {
+    expect(projetarHorizonteUG(ugCom([], { cap: 0 })).semDados).toBe(true);
+    expect(projetarHorizonteUG(ugCom([cliente("G", 200, 0, true, 0)])).semDados).toBe(true);
+  });
+});
+
+describe("urgenciaEfetivaUG", () => {
+  const projBase = (over) => ({
+    semDados: false,
+    porCliente: [{ cliente: { status: { nivel: "ideal" } } }],
+    agregado: { statusHoje: { nivel: "ideal", razao: 2 }, statusProjetado: { nivel: "ideal", razao: 2 }, direcao: "→", mesesParaFronteira: Infinity },
+    exigemAcao: [], flagsCriticos: [],
+    contagem: { corrigindo: 0, estavel: 1, rumoProblema: 0, paradoFora: 0, semProjecao: 0 },
+    ...over,
+  });
+
+  it("rebaixa para monitorar quando a UG está crítica mas se autocorrige", () => {
+    const r = urgenciaEfetivaUG(projBase({
+      porCliente: [{ cliente: { status: { nivel: "critico" } } }],
+      agregado: { statusHoje: { nivel: "critico", razao: 0.4 }, statusProjetado: { nivel: "alto", razao: 3.4 }, direcao: "↗", mesesParaFronteira: 0.2 },
+      contagem: { corrigindo: 2, estavel: 0, rumoProblema: 0, paradoFora: 0, semProjecao: 0 },
+    }));
+    expect(r.nivel).toBe("monitorar");
+    expect(r.original).toBe("aja");
+    expect(r.motivo).toMatch(/sai do crítico/);
+  });
+
+  it("mantém aja quando algum cliente exige ação (exceção vence) e preserva a foto em original", () => {
+    const r = urgenciaEfetivaUG(projBase({ exigemAcao: [{ uc: "B" }] }));
+    expect(r.nivel).toBe("aja");
+    expect(r.original).toBe("ok"); // foto da fixture base é ideal → naive ok
+  });
+
+  it("usa mensagem de excesso (não de crítico) quando o que se corrige é saldo excessivo", () => {
+    const r = urgenciaEfetivaUG(projBase({
+      porCliente: [{ cliente: { status: { nivel: "excessivo" } } }],
+      agregado: { statusHoje: { nivel: "excessivo", razao: 8 }, statusProjetado: { nivel: "alto", razao: 5 }, direcao: "↘", mesesParaFronteira: 3 },
+      contagem: { corrigindo: 1, estavel: 0, rumoProblema: 0, paradoFora: 0, semProjecao: 0 },
+    }));
+    expect(r.nivel).toBe("monitorar");
+    expect(r.motivo).toMatch(/normaliza o excesso/);
+    expect(r.motivo).not.toMatch(/crítico/);
+  });
+
+  it("cai no texto sem prazo quando mesesParaFronteira é Infinity", () => {
+    const r = urgenciaEfetivaUG(projBase({
+      porCliente: [{ cliente: { status: { nivel: "critico" } } }],
+      agregado: { statusHoje: { nivel: "critico", razao: 0.4 }, statusProjetado: { nivel: "baixo", razao: 0.6 }, direcao: "↗", mesesParaFronteira: Infinity },
+      contagem: { corrigindo: 1, estavel: 0, rumoProblema: 0, paradoFora: 0, semProjecao: 0 },
+    }));
+    expect(r.nivel).toBe("monitorar");
+    expect(r.motivo).toBe("em rota de melhora");
+  });
+
+  it("sobe para monitorar preventivo quando o agregado ideal segue rumo a crítico", () => {
+    const r = urgenciaEfetivaUG(projBase({
+      agregado: { statusHoje: { nivel: "ideal", razao: 2 }, statusProjetado: { nivel: "critico", razao: 0.3 }, direcao: "↘", mesesParaFronteira: 4 },
+    }));
+    expect(r.nivel).toBe("monitorar");
+    expect(r.original).toBe("ok");
+    expect(r.motivo).toMatch(/crítico/);
+  });
+
+  it("passa direto (ok) quando não há trajetória relevante", () => {
+    const r = urgenciaEfetivaUG(projBase({}));
+    expect(r.nivel).toBe("ok");
+    expect(r.motivo).toBeNull();
   });
 });

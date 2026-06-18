@@ -819,6 +819,86 @@ export function projetarHorizonte(cliente, novoRateioPct, distribuivel) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Projeção agregada por UG (rota ATUAL — rateio mantido constante).
+// Reaproveita projetarHorizonte por cliente e agrega num veredito de UG.
+// Não muta `ug`. Sem modelagem nova: só soma + rótulo.
+// ═══════════════════════════════════════════════════════════════════
+export const HORIZONTE_PROJECAO_MESES = 6;
+
+// Traduz o `tipo` de projetarHorizonte num bucket de trajetória de SAÚDE.
+export function bucketTrajetoria(tipo) {
+  switch (tipo) {
+    case "recuperando":
+    case "normalizando":  return "corrigindo";
+    case "estavel":       return "estavel";
+    case "ate_critico":
+    case "ate_excessivo": return "rumoProblema";
+    case "ja_critico":
+    case "ja_excessivo":  return "paradoFora";
+    default:              return "semProjecao";
+  }
+}
+
+export function projetarHorizonteUG(ug, { horizonte = HORIZONTE_PROJECAO_MESES } = {}) {
+  const distribuivel = distribuivelDaUG(ug);
+  const benef = (ug?.clientes || []).filter(
+    c => !c.ehUCGeradora && (c.cmc || 0) > 0 && (c.rateio_pct || 0) > 0
+  );
+
+  const vazio = {
+    porCliente: [], agregado: null, exigemAcao: [], flagsCriticos: [],
+    contagem: { corrigindo: 0, estavel: 0, rumoProblema: 0, paradoFora: 0, semProjecao: 0 },
+    semDados: true,
+  };
+  if (distribuivel <= 0 || benef.length === 0) return vazio;
+
+  const porCliente = benef.map(c => {
+    const projecao = projetarHorizonte(c, c.rateio_pct || 0, distribuivel);
+    return { cliente: c, projecao, bucket: projecao ? bucketTrajetoria(projecao.tipo) : "semProjecao" };
+  });
+
+  const contagem = { corrigindo: 0, estavel: 0, rumoProblema: 0, paradoFora: 0, semProjecao: 0 };
+  porCliente.forEach(p => { contagem[p.bucket]++; });
+
+  // "Exige ação" = fora da faixa e NÃO se autocorrigindo (mesmo predicado do badge atual).
+  const exigeAcao = p => p.projecao && (
+    p.projecao.tipo === "ja_critico" || p.projecao.tipo === "ja_excessivo" ||
+    ((p.projecao.tipo === "ate_critico" || p.projecao.tipo === "ate_excessivo") && p.projecao.meses <= horizonte)
+  );
+  const exigemAcao = porCliente.filter(exigeAcao).map(p => p.cliente);
+  // Subconjunto só-crítico, para a mensagem nuançada da urgência.
+  const flagsCriticos = porCliente
+    .filter(p => p.projecao && (p.projecao.tipo === "ja_critico" ||
+      (p.projecao.tipo === "ate_critico" && p.projecao.meses <= horizonte)))
+    .map(p => p.cliente);
+
+  // Agregado: "cliente somado" → reusa projetarHorizonte (recebe e net batem por linearidade).
+  // Só clientes projetáveis entram no agregado; se nenhum projeta (ex.: todos GD2 sem
+  // projeção), trata como sem dados em vez de cair em statusSaldo(0,0).
+  const proj = porCliente.filter(p => p.projecao);
+  if (proj.length === 0) return vazio;
+  const saldoSoma  = proj.reduce((s, p) => s + (p.cliente.saldo || 0), 0);
+  const cmcSoma    = proj.reduce((s, p) => s + (p.cliente.cmc || 0), 0);
+  const rateioSoma = proj.reduce((s, p) => s + (p.cliente.rateio_pct || 0), 0);
+  const statusHoje = statusSaldo(saldoSoma, cmcSoma);
+  const projAgg    = projetarHorizonte({ cmc: cmcSoma, saldo: saldoSoma, ehUCGeradora: false }, rateioSoma, distribuivel);
+  // netTotal re-derivado direto (em vez de via projAgg) para casar com statusSaldo; é a
+  // mesma álgebra que projetarHorizonte usa internamente (recebe − CMC).
+  const netTotal   = (rateioSoma / 100) * distribuivel - cmcSoma;
+  const statusProjetado = statusSaldo(saldoSoma + horizonte * netTotal, cmcSoma);
+  const dr = statusProjetado.razao - statusHoje.razao;
+  // Limiar de 0,05 na RAZÃO saldo/CMC agregada (≈ meia semana de consumo) — abaixo disso
+  // a variação é ruído e a direção fica estável (→).
+  const direcao = Math.abs(dr) < 0.05 ? "→" : dr > 0 ? "↗" : "↘";
+
+  return {
+    porCliente,
+    agregado: { statusHoje, statusProjetado, direcao, projecao: projAgg, mesesParaFronteira: projAgg?.meses ?? null },
+    exigemAcao, flagsCriticos, contagem, semDados: false,
+  };
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Cenário Proposto — aplica todas as recomendações do planoGlobal a uma UG
 // e devolve o snapshot projetado (linhas + métricas agregadas).
 // Função pura: não muta `ug` nem `planoGlobal`.
@@ -1649,6 +1729,37 @@ export function computeIndicadores(clientes, ugsValidadas = [], { mesRef = null 
     // carregamento por UG
     ...carreg,
   };
+}
+
+// ─── urgenciaEfetivaUG ────────────────────────────────────────
+// Urgência efetiva: combina a FOTO (statusSaldo dos clientes) com a TRAJETÓRIA.
+// Sempre devolve `original` (a foto) para o card mostrar "era: …" — auditável.
+export function urgenciaEfetivaUG(proj) {
+  if (!proj || proj.semDados || !proj.agregado) {
+    return { nivel: "ok", original: "ok", motivo: null, proj };
+  }
+  const ag = proj.agregado;
+  const naive = proj.porCliente.some(
+    p => p.cliente?.status?.nivel === "critico" || p.cliente?.status?.nivel === "excessivo"
+  ) ? "aja" : "ok";
+  const ceil = n => Number.isFinite(n) ? Math.max(1, Math.ceil(n)) : null;
+
+  if (proj.exigemAcao.length > 0) {
+    const n = proj.exigemAcao.length;
+    return { nivel: "aja", original: naive, motivo: `${n} ${n === 1 ? "cliente" : "clientes"} em crítico/excesso`, proj };
+  }
+  if (naive === "aja" && proj.contagem.corrigindo > 0) {
+    const m = ceil(ag.mesesParaFronteira);
+    // Mensagem fiel ao problema que se corrige: déficit (crítico) drena ≠ excesso normaliza.
+    const temCritico = proj.porCliente.some(p => p.cliente?.status?.nivel === "critico");
+    const alvo = temCritico ? "sai do crítico" : "normaliza o excesso";
+    return { nivel: "monitorar", original: "aja", motivo: m ? `${alvo} em ~${m}m` : "em rota de melhora", proj };
+  }
+  if (naive === "ok" && ag.direcao === "↘" && ag.statusProjetado.nivel === "critico") {
+    const m = ceil(ag.mesesParaFronteira);
+    return { nivel: "monitorar", original: "ok", motivo: m ? `rota leva a crítico ~${m}m` : "rota leva a crítico", proj };
+  }
+  return { nivel: naive, original: naive, motivo: null, proj };
 }
 
 // ─── deltaMensal ─────────────────────────────────────────────
