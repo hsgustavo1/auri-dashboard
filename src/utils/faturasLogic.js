@@ -212,35 +212,67 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
 /**
  * Agrega estatísticas resumidas para os cards do mês atual.
  *
- * - recebido: efetivação no mesAtual (independe do mês de ref.)
- * - esperado: vencimento real no mesAtual com status pendente
- * - atrasado: status overdue em qualquer mês da janela
+ * - geradas/total: mês de referência (billing month) = mesAtual
+ * - recebidaNoPrazo/recebidaEmAtraso: vencimento real = mesAtual
+ * - aguardandoPagamento: split mês corrente vs meses anteriores
  */
 export function buildSummaryStats(entities, ugs, mesAtual) {
   const all = [...(entities || []), ...(ugs || [])];
+
+  function monthOrd(mes) {
+    if (!mes) return 0;
+    const [mm, yyyy] = mes.split("/");
+    return parseInt(yyyy, 10) * 12 + parseInt(mm, 10);
+  }
+  const mesAtualOrd = monthOrd(mesAtual);
+
   const stats = {
-    recebido: { qtd: 0, valor: 0 },
-    esperado: { qtd: 0, valor: 0 },
-    atrasado: { qtd: 0, valor: 0 },
+    geradas: { qtd: 0, total: 0 },
+    aguardandoFaturamento: { qtd: 0 },
+    recebidaNoPrazo: { qtd: 0, valor: 0 },
+    recebidaEmAtraso: { qtd: 0, valor: 0 },
+    aguardandoPagamento: {
+      mes: { qtd: 0, valor: 0 },
+      anterior: { qtd: 0, valor: 0 },
+    },
   };
 
   for (const entity of all) {
+    const cellAtual = entity.cells?.[mesAtual];
+    if (cellAtual !== undefined) {
+      stats.geradas.total++;
+      if (cellAtual.status !== "blank") {
+        stats.geradas.qtd++;
+      } else {
+        stats.aguardandoFaturamento.qtd++;
+      }
+    }
+
     for (const cell of Object.values(entity.cells || {})) {
       if (cell.status === "blank") continue;
 
-      if (cell.efetivacao && getMonthFromDate(cell.efetivacao) === mesAtual) {
-        stats.recebido.qtd++;
-        stats.recebido.valor += cell.valor || 0;
-      }
+      const vencMesReal = getMonthFromDate(cell.vencimento);
+      if (!vencMesReal) continue;
 
-      if (cell.status === "pending" && getMonthFromDate(cell.vencimento) === mesAtual) {
-        stats.esperado.qtd++;
-        stats.esperado.valor += cell.valor || 0;
-      }
+      const isPaid    = cell.status === "paid";
+      const isUnpaid  = cell.status === "pending" || cell.status === "overdue";
 
-      if (cell.status === "overdue") {
-        stats.atrasado.qtd++;
-        stats.atrasado.valor += cell.valor || 0;
+      if (vencMesReal === mesAtual) {
+        if (isPaid) {
+          if (isLatePayment(cell.efetivacao, cell.vencimento)) {
+            stats.recebidaEmAtraso.qtd++;
+            stats.recebidaEmAtraso.valor += cell.valor || 0;
+          } else {
+            stats.recebidaNoPrazo.qtd++;
+            stats.recebidaNoPrazo.valor += cell.valor || 0;
+          }
+        } else if (isUnpaid) {
+          stats.aguardandoPagamento.mes.qtd++;
+          stats.aguardandoPagamento.mes.valor += cell.valor || 0;
+        }
+      } else if (monthOrd(vencMesReal) < mesAtualOrd && isUnpaid) {
+        stats.aguardandoPagamento.anterior.qtd++;
+        stats.aguardandoPagamento.anterior.valor += cell.valor || 0;
       }
     }
   }
