@@ -48,11 +48,11 @@ export function deriveCellStatus(receitas, hoje = new Date()) {
   return { status: "pending", vencimento: r.vencimento, valor: r.valor };
 }
 
-// Mapa UC code → nome da UG (combina códigos antigos e novos)
+// Mapa UC code → nome da UG (combina antigos e novos; NOVA sobrescreve ANTIGA para mesma UG)
 function buildUGCodeMap() {
   const map = {};
-  Object.entries(UC_GERADORA_NOVA).forEach(([uc, nome]) => { map[uc] = nome; });
   Object.entries(UC_GERADORA_ANTIGA).forEach(([uc, nome]) => { map[uc] = nome; });
+  Object.entries(UC_GERADORA_NOVA).forEach(([uc, nome]) => { map[uc] = nome; });
   return map;
 }
 

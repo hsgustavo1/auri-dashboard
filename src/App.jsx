@@ -7,7 +7,7 @@ import FaturasModule from "./modules/faturas/FaturasModule";
 // Casca de nível superior. Cada área grande do negócio é um MÓDULO isolado:
 //   • Painel     — dashboard de rateio (Visão Geral · Otimizador · Comparativo · Clientes · LTV · Yield)
 //   • Docs       — Auri Docs, etapa de aquisição de clientes
-// Futuros módulos (Faturas, NF, CRM, Financeiro) entram aqui como irmãos.
+// Futuros módulos (NF, CRM, Financeiro) entram aqui como irmãos.
 const MODULOS = [
   { id: "painel",  label: "Painel",  render: () => <PainelModule /> },
   { id: "faturas", label: "Faturas", render: () => <FaturasModule /> },
