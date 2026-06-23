@@ -94,6 +94,7 @@ export default function FaturasModule() {
             entities={data.entities}
             ugs={data.ugs}
             mesAtual={data.meses[data.meses.length - 1]}
+            onCardClick={handleBarClick}
           />
           <FaturaMatrix entities={data.entities} ugs={data.ugs} meses={data.meses} />
           <FaturaHeatmap

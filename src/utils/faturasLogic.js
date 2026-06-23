@@ -56,6 +56,13 @@ function buildUGCodeMap() {
   return map;
 }
 
+// Converte "MM/YYYY" para número ordinal para comparação de meses
+function monthOrd(mes) {
+  if (!mes) return 0;
+  const [mm, yyyy] = mes.split("/");
+  return parseInt(yyyy, 10) * 12 + parseInt(mm, 10);
+}
+
 // Extrai dia do mês de "DD/MM/YYYY"; retorna null se inválido
 function extractDay(dateStr) {
   if (!dateStr) return null;
@@ -218,12 +225,6 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
  */
 export function buildSummaryStats(entities, ugs, mesAtual) {
   const all = [...(entities || []), ...(ugs || [])];
-
-  function monthOrd(mes) {
-    if (!mes) return 0;
-    const [mm, yyyy] = mes.split("/");
-    return parseInt(yyyy, 10) * 12 + parseInt(mm, 10);
-  }
   const mesAtualOrd = monthOrd(mesAtual);
 
   const stats = {
@@ -281,35 +282,44 @@ export function buildSummaryStats(entities, ugs, mesAtual) {
 }
 
 /**
- * Retorna lista plana de faturas que correspondem ao filtro de clique do heatmap.
+ * Retorna lista plana de faturas que correspondem ao filtro.
  *
- * filtro: { mes: "MM/YYYY", dia: number, serie: "esperado"|"realizado"|"realizadoAntes" }
- *   - mes sem dia/serie → todas as faturas do mês
- *   - null → todas as faturas
+ * filtro: { mes, dia?, serie? }   — clique no heatmap
+ *         { mes, card }           — clique num card de resumo
+ *   card: "geradas" | "noPrazo" | "emAtraso" | "aguardandoMes" | "aguardandoAnterior"
  */
 export function buildDetailRows(entities, ugs, filtro) {
   const all = [...(entities || []), ...(ugs || [])];
   const rows = [];
-  const { mes, dia, serie } = filtro || {};
+  const { mes, dia, serie, card } = filtro || {};
 
   for (const entity of all) {
     for (const [vencMes, cell] of Object.entries(entity.cells || {})) {
       if (cell.status === "blank") continue;
 
       const vencDia = extractDay(cell.vencimento);
-      const vencMesReal = getMonthFromDate(cell.vencimento); // mês real do vencimento (≠ billing month)
+      const vencMesReal = getMonthFromDate(cell.vencimento);
       const efetDia = extractDay(cell.efetivacao);
       const efetMes = getMonthFromDate(cell.efetivacao);
       const tipo = deriveSerie(cell);
+      const isUnpaid = cell.status === "pending" || cell.status === "overdue";
 
       let include = false;
       if (!mes) {
         include = true;
+      } else if (card === "geradas") {
+        include = vencMes === mes;
+      } else if (card === "noPrazo") {
+        include = vencMesReal === mes && cell.status === "paid" && !isLatePayment(cell.efetivacao, cell.vencimento);
+      } else if (card === "emAtraso") {
+        include = vencMesReal === mes && cell.status === "paid" && isLatePayment(cell.efetivacao, cell.vencimento);
+      } else if (card === "aguardandoMes") {
+        include = vencMesReal === mes && isUnpaid;
+      } else if (card === "aguardandoAnterior") {
+        include = !!vencMesReal && monthOrd(vencMesReal) < monthOrd(mes) && isUnpaid;
       } else if (!dia && !serie) {
-        // Filtro de mês: usa o mês real do vencimento (não o billing month)
         include = vencMesReal === mes;
       } else if (dia && !serie) {
-        // Clique num dia: vencimento real neste dia/mês OU efetivação neste dia/mês
         include = (vencMesReal === mes && vencDia === dia)
                || (efetMes   === mes && efetDia === dia);
       } else if (serie === "esperado") {

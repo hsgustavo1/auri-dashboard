@@ -12,6 +12,14 @@ function fmtMes(mes) {
 const fmtBRL = v =>
   v == null ? "–" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
+const CARD_LABEL = {
+  geradas:           "Faturas do mês",
+  noPrazo:           "Recebidas no prazo",
+  emAtraso:          "Recebidas em atraso",
+  aguardandoMes:     "Aguardando pagamento · mês atual",
+  aguardandoAnterior:"Aguardando pagamento · meses anteriores",
+};
+
 const STATUS_LABEL = { paid: "Pago", pending: "Pendente", overdue: "Atrasado" };
 const STATUS_CLS = {
   paid:    "text-green-700 bg-green-50 border border-green-200",
@@ -37,10 +45,12 @@ export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) 
   );
 
   const filtroDesc = filtro
-    ? [
-        filtro.dia ? `Dia ${filtro.dia}` : null,
-        filtro.mes ? fmtMes(filtro.mes)  : null,
-      ].filter(Boolean).join(" · ")
+    ? filtro.card
+      ? `${CARD_LABEL[filtro.card] ?? filtro.card} · ${fmtMes(filtro.mes)}`
+      : [
+          filtro.dia ? `Dia ${filtro.dia}` : null,
+          filtro.mes ? fmtMes(filtro.mes)  : null,
+        ].filter(Boolean).join(" · ")
     : null;
 
   const totalValor = rows.reduce((s, r) => s + (r.valor || 0), 0);
