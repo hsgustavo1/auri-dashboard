@@ -205,15 +205,25 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
  * @returns {{ day: number, esperado: number, realizado: number }[]} — 31 entradas
  */
 export function buildHeatmapData(entities) {
-  const counts = Array.from({ length: 31 }, (_, i) => ({ day: i + 1, esperado: 0, realizado: 0 }));
+  const counts = Array.from({ length: 31 }, (_, i) => ({
+    day: i + 1,
+    esperado: 0, realizado: 0,
+    esperadoValor: 0, realizadoValor: 0,
+  }));
 
   for (const entity of entities) {
     for (const cell of Object.values(entity.cells || {})) {
       if (cell.status === "blank") continue;
       const dayVenc = extractDay(cell.vencimento);
-      if (dayVenc) counts[dayVenc - 1].esperado++;
+      if (dayVenc) {
+        counts[dayVenc - 1].esperado++;
+        counts[dayVenc - 1].esperadoValor += cell.valor || 0;
+      }
       const dayEfet = extractDay(cell.efetivacao);
-      if (dayEfet) counts[dayEfet - 1].realizado++;
+      if (dayEfet) {
+        counts[dayEfet - 1].realizado++;
+        counts[dayEfet - 1].realizadoValor += cell.valor || 0;
+      }
     }
   }
 
