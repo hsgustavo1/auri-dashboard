@@ -103,15 +103,10 @@ export default function FaturaHeatmap({ entities, ugs, meses, onBarClick }) {
     return { day: d.day, pct: totalEsperado > 0 ? (cumul / totalEsperado) * 100 : 0 };
   });
 
-  // Normaliza o dataKey da barra de valor → chave da série base
-  const normSerie = key => key.replace("Valor", "");
-
-  function handleBarClick(serie) {
-    return (data) => {
-      if (onBarClick && data?.day) {
-        onBarClick({ mes: mesSelecionado, dia: data.day, serie: normSerie(serie) });
-      }
-    };
+  function handleBarClick(data) {
+    if (onBarClick && data?.day) {
+      onBarClick({ mes: mesSelecionado, dia: data.day });
+    }
   }
 
   return (
@@ -134,9 +129,9 @@ export default function FaturaHeatmap({ entities, ugs, meses, onBarClick }) {
       <Chart title="Quantidade de faturas" data={heatmap}>
         <Tooltip content={<TooltipQtd />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={legendFormatter} />
-        <Bar dataKey="esperado"       fill="rgba(30,74,54,0.4)"           radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("esperado")} />
-        <Bar dataKey="realizado"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarClick("realizado")} />
-        <Bar dataKey="realizadoAntes" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("realizadoAntes")} />
+        <Bar dataKey="esperado"       fill="rgba(30,74,54,0.4)"           radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick} />
+        <Bar dataKey="realizado"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarClick} />
+        <Bar dataKey="realizadoAntes" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick} />
       </Chart>
 
       <Chart
@@ -146,9 +141,9 @@ export default function FaturaHeatmap({ entities, ugs, meses, onBarClick }) {
       >
         <Tooltip content={<TooltipValor />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={legendFormatter} />
-        <Bar dataKey="esperadoValor"       fill="rgba(30,74,54,0.4)"           radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("esperadoValor")} />
-        <Bar dataKey="realizadoValor"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarClick("realizadoValor")} />
-        <Bar dataKey="realizadoAntesValor" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("realizadoAntesValor")} />
+        <Bar dataKey="esperadoValor"       fill="rgba(30,74,54,0.4)"           radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick} />
+        <Bar dataKey="realizadoValor"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarClick} />
+        <Bar dataKey="realizadoAntesValor" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick} />
       </Chart>
 
       <div>

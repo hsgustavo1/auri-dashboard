@@ -71,6 +71,22 @@ function getMonthFromDate(dateStr) {
   return `${parts[1]}/${parts[2]}`;
 }
 
+// Retorna true se a efetivação ocorreu APÓS a data de vencimento (pagamento em atraso).
+// Compara datas completas — não meses — pois o mês de ref. pode diferir do mês de vencimento.
+function isLatePayment(efetivacao, vencimento) {
+  if (!efetivacao || !vencimento) return false;
+  const efet = parseDateBR(efetivacao);
+  const venc = parseDateBR(vencimento);
+  return efet && venc ? efet > venc : false;
+}
+
+// Classifica a série de um pagamento para uso no detalhe e no heatmap.
+// "esperado" = sem efetivação; "realizadoAntes" = pago após vencimento; "realizado" = no prazo.
+export function deriveSerie(cell) {
+  if (!cell || !cell.efetivacao) return "esperado";
+  return isLatePayment(cell.efetivacao, cell.vencimento) ? "realizadoAntes" : "realizado";
+}
+
 // Verifica se um UC tem receita não paga (sem efetivacao) nos meses fornecidos
 function hasUnpaidReceita(uc, rdReceitas, meses) {
   return meses.some(mes =>
@@ -212,18 +228,24 @@ export function buildDetailRows(entities, ugs, filtro) {
       const vencDia = extractDay(cell.vencimento);
       const efetDia = extractDay(cell.efetivacao);
       const efetMes = getMonthFromDate(cell.efetivacao);
+      const tipo = deriveSerie(cell);
 
       let include = false;
       if (!mes) {
         include = true;
       } else if (!dia && !serie) {
+        // Filtro apenas de mês: todas as faturas com vencimento neste mês
         include = vencMes === mes;
+      } else if (dia && !serie) {
+        // Clique num dia: tudo com vencimento OU efetivação neste dia/mês
+        include = (vencMes === mes && vencDia === dia)
+               || (efetMes === mes && efetDia === dia);
       } else if (serie === "esperado") {
         include = vencMes === mes && vencDia === dia;
       } else if (serie === "realizado") {
-        include = efetMes === mes && efetDia === dia && efetMes === vencMes;
+        include = efetMes === mes && efetDia === dia && tipo === "realizado";
       } else if (serie === "realizadoAntes") {
-        include = efetMes === mes && efetDia === dia && efetMes !== vencMes;
+        include = efetMes === mes && efetDia === dia && tipo === "realizadoAntes";
       }
 
       if (include) {
@@ -237,6 +259,7 @@ export function buildDetailRows(entities, ugs, filtro) {
           efetivacao: cell.efetivacao,
           valor: cell.valor,
           status: cell.status,
+          tipo,
         });
       }
     }
@@ -279,21 +302,19 @@ export function buildHeatmapData(entities, mesFiltro = null) {
         }
       }
 
-      // Realizado: filtra pelo mês de efetivação
-      // Separa entre pagamentos no prazo (efetivação no mesmo mês do vencimento)
-      // e pagamentos de meses anteriores (efetivação neste mês, vencimento em outro)
+      // Realizado: filtra pelo mês de efetivação.
+      // "No prazo" = efetivacao <= vencimento; "Com atraso" = efetivacao > vencimento.
       if (cell.efetivacao) {
         const efetMes = getMonthFromDate(cell.efetivacao);
         if (!mesFiltro || efetMes === mesFiltro) {
           const dayEfet = extractDay(cell.efetivacao);
           if (dayEfet) {
-            const isOnTime = efetMes === mes;
-            if (isOnTime) {
-              counts[dayEfet - 1].realizado++;
-              counts[dayEfet - 1].realizadoValor += cell.valor || 0;
-            } else {
+            if (isLatePayment(cell.efetivacao, cell.vencimento)) {
               counts[dayEfet - 1].realizadoAntes++;
               counts[dayEfet - 1].realizadoAntesValor += cell.valor || 0;
+            } else {
+              counts[dayEfet - 1].realizado++;
+              counts[dayEfet - 1].realizadoValor += cell.valor || 0;
             }
           }
         }

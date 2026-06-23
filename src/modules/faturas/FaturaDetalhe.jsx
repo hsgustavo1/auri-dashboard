@@ -12,17 +12,22 @@ function fmtMes(mes) {
 const fmtBRL = v =>
   v == null ? "–" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
-const SERIE_LABEL = {
-  esperado:       "Esperado (vencimento)",
-  realizado:      "Recebido no prazo",
-  realizadoAntes: "Recebido c/ atraso (mês ant.)",
-};
-
 const STATUS_LABEL = { paid: "Pago", pending: "Pendente", overdue: "Atrasado" };
 const STATUS_CLS = {
   paid:    "text-green-700 bg-green-50 border border-green-200",
   pending: "text-amber-700 bg-amber-50 border border-amber-200",
   overdue: "text-red-700 bg-red-50 border border-red-200",
+};
+
+const TIPO_LABEL = {
+  esperado:       "Esperado",
+  realizado:      "No prazo",
+  realizadoAntes: "Com atraso",
+};
+const TIPO_CLS = {
+  esperado:       "text-forest-500 bg-forest-900/8 border border-forest-900/20",
+  realizado:      "text-amber-700 bg-amber-50 border border-amber-200",
+  realizadoAntes: "text-orange-700 bg-orange-50 border border-orange-200",
 };
 
 export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) {
@@ -33,9 +38,8 @@ export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) 
 
   const filtroDesc = filtro
     ? [
-        filtro.dia    ? `Dia ${filtro.dia}`           : null,
-        filtro.mes    ? fmtMes(filtro.mes)             : null,
-        filtro.serie  ? SERIE_LABEL[filtro.serie]      : null,
+        filtro.dia ? `Dia ${filtro.dia}` : null,
+        filtro.mes ? fmtMes(filtro.mes)  : null,
       ].filter(Boolean).join(" · ")
     : null;
 
@@ -73,13 +77,14 @@ export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) 
               <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-forest-400">Vencimento</th>
               <th className="px-3 py-2 text-left text-[11px] uppercase tracking-wider text-forest-400">Efetivação</th>
               <th className="px-3 py-2 text-right text-[11px] uppercase tracking-wider text-forest-400">Valor</th>
+              <th className="px-3 py-2 text-center text-[11px] uppercase tracking-wider text-forest-400">Tipo</th>
               <th className="px-3 py-2 text-center text-[11px] uppercase tracking-wider text-forest-400">Status</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-10 text-center text-forest-400 text-xs">
+                <td colSpan={7} className="px-3 py-10 text-center text-forest-400 text-xs">
                   Nenhuma fatura encontrada para este filtro.
                 </td>
               </tr>
@@ -102,6 +107,11 @@ export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) 
                     {fmtBRL(row.valor)}
                   </td>
                   <td className="px-3 py-1.5 text-center">
+                    <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${TIPO_CLS[row.tipo] ?? ""}`}>
+                      {TIPO_LABEL[row.tipo] ?? "–"}
+                    </span>
+                  </td>
+                  <td className="px-3 py-1.5 text-center">
                     <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${STATUS_CLS[row.status] ?? ""}`}>
                       {STATUS_LABEL[row.status] ?? row.status}
                     </span>
@@ -115,7 +125,7 @@ export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) 
               <tr className="border-t-2 border-forest-900/20 bg-forest-900/5">
                 <td colSpan={4} className="px-3 py-1.5 text-xs text-forest-400">Total</td>
                 <td className="px-3 py-1.5 text-right font-semibold tabular-nums text-sm">{fmtBRL(totalValor)}</td>
-                <td />
+                <td colSpan={2} />
               </tr>
             </tfoot>
           )}
