@@ -169,10 +169,16 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
   const entities = Array.from(byNome.values())
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
+  // Nome do cliente real para cada UC de UG (vem da aba clientes)
+  const ugClientNome = {};
+  clientes
+    .filter(c => ugUCs.has(c.uc) && c.nome)
+    .forEach(c => { ugClientNome[c.uc] = c.nome; });
+
   // UGs — 7 entidades fixas; cada UG pode ter UC antiga + UC nova, mesclamos as células
-  const ugs = UG_NOMES.map(nome => {
+  const ugs = UG_NOMES.map(nomeUG => {
     const ugUcCodes = Object.entries(ugCodeMap)
-      .filter(([, n]) => n === nome)
+      .filter(([, n]) => n === nomeUG)
       .map(([uc]) => uc);
 
     const allCells = ugUcCodes.map(uc => buildCells(uc, true));
@@ -185,6 +191,8 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
     }
 
     const primaryUC = ugUcCodes[ugUcCodes.length - 1] || "";
+    // Usa nome do cliente da aba clientes; fallback para o nome interno da UG
+    const nome = ugUcCodes.map(uc => ugClientNome[uc]).find(n => n) || nomeUG;
     return { nome, uc: primaryUC, isUG: true, cells };
   });
 
