@@ -86,7 +86,7 @@ function fmtMes(mes) {
   return `${meses[parseInt(mm, 10) - 1]}/${yyyy.slice(2)}`;
 }
 
-export default function FaturaHeatmap({ entities, ugs, meses }) {
+export default function FaturaHeatmap({ entities, ugs, meses, onBarClick }) {
   const allEntities = useMemo(() => [...(entities || []), ...(ugs || [])], [entities, ugs]);
   const mesPadrao = meses?.[meses.length - 1] ?? null;
   const [mesSelecionado, setMesSelecionado] = useState(mesPadrao);
@@ -102,6 +102,17 @@ export default function FaturaHeatmap({ entities, ugs, meses }) {
     cumul += d.realizadoValor + d.realizadoAntesValor;
     return { day: d.day, pct: totalEsperado > 0 ? (cumul / totalEsperado) * 100 : 0 };
   });
+
+  // Normaliza o dataKey da barra de valor → chave da série base
+  const normSerie = key => key.replace("Valor", "");
+
+  function handleBarClick(serie) {
+    return (data) => {
+      if (onBarClick && data?.day) {
+        onBarClick({ mes: mesSelecionado, dia: data.day, serie: normSerie(serie) });
+      }
+    };
+  }
 
   return (
     <div className="mt-6 space-y-5">
@@ -123,9 +134,9 @@ export default function FaturaHeatmap({ entities, ugs, meses }) {
       <Chart title="Quantidade de faturas" data={heatmap}>
         <Tooltip content={<TooltipQtd />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={legendFormatter} />
-        <Bar dataKey="esperado"       fill="rgba(30,74,54,0.4)"    radius={[2, 2, 0, 0]} />
-        <Bar dataKey="realizado"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="realizadoAntes" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} />
+        <Bar dataKey="esperado"       fill="rgba(30,74,54,0.4)"           radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("esperado")} />
+        <Bar dataKey="realizado"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarClick("realizado")} />
+        <Bar dataKey="realizadoAntes" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("realizadoAntes")} />
       </Chart>
 
       <Chart
@@ -135,9 +146,9 @@ export default function FaturaHeatmap({ entities, ugs, meses }) {
       >
         <Tooltip content={<TooltipValor />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={legendFormatter} />
-        <Bar dataKey="esperadoValor"       fill="rgba(30,74,54,0.4)"    radius={[2, 2, 0, 0]} />
-        <Bar dataKey="realizadoValor"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="realizadoAntesValor" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} />
+        <Bar dataKey="esperadoValor"       fill="rgba(30,74,54,0.4)"           radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("esperadoValor")} />
+        <Bar dataKey="realizadoValor"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} cursor="pointer" onClick={handleBarClick("realizadoValor")} />
+        <Bar dataKey="realizadoAntesValor" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} cursor="pointer" onClick={handleBarClick("realizadoAntesValor")} />
       </Chart>
 
       <div>

@@ -194,6 +194,58 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
  * @returns {{ day: number, esperado: number, realizado: number }[]} — 31 entradas
  */
 /**
+ * Retorna lista plana de faturas que correspondem ao filtro de clique do heatmap.
+ *
+ * filtro: { mes: "MM/YYYY", dia: number, serie: "esperado"|"realizado"|"realizadoAntes" }
+ *   - mes sem dia/serie → todas as faturas do mês
+ *   - null → todas as faturas
+ */
+export function buildDetailRows(entities, ugs, filtro) {
+  const all = [...(entities || []), ...(ugs || [])];
+  const rows = [];
+  const { mes, dia, serie } = filtro || {};
+
+  for (const entity of all) {
+    for (const [vencMes, cell] of Object.entries(entity.cells || {})) {
+      if (cell.status === "blank") continue;
+
+      const vencDia = extractDay(cell.vencimento);
+      const efetDia = extractDay(cell.efetivacao);
+      const efetMes = getMonthFromDate(cell.efetivacao);
+
+      let include = false;
+      if (!mes) {
+        include = true;
+      } else if (!dia && !serie) {
+        include = vencMes === mes;
+      } else if (serie === "esperado") {
+        include = vencMes === mes && vencDia === dia;
+      } else if (serie === "realizado") {
+        include = efetMes === mes && efetDia === dia && efetMes === vencMes;
+      } else if (serie === "realizadoAntes") {
+        include = efetMes === mes && efetDia === dia && efetMes !== vencMes;
+      }
+
+      if (include) {
+        rows.push({
+          nome: entity.nome,
+          uc: entity.uc,
+          ucAntiga: entity.ucAntiga || null,
+          isUG: entity.isUG,
+          vencMes,
+          vencimento: cell.vencimento,
+          efetivacao: cell.efetivacao,
+          valor: cell.valor,
+          status: cell.status,
+        });
+      }
+    }
+  }
+
+  return rows.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+}
+
+/**
  * Agrega vencimentos e efetivações por dia do mês para o heatmap.
  *
  * Esperado: agrupa por mês de vencimento (quando a fatura era devida).
