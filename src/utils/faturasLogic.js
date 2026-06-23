@@ -83,7 +83,7 @@ function hasUnpaidReceita(uc, rdReceitas, meses) {
  *   Entity: { nome, uc, isUG, cells: { [mes]: CellResult } }
  *   CellResult: { status, efetivacao?, vencimento?, valor?, fatAuriFallback? }
  */
-export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, hoje = new Date() }) {
+export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap = {}, hoje = new Date() }) {
   const ugCodeMap = buildUGCodeMap();
   const ugUCs = new Set(Object.keys(ugCodeMap));
   const meses = getLast12Months(hoje);
@@ -122,10 +122,34 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, hoje = new Da
   // Mesclamos por nome para mostrar o histórico completo em uma única linha.
   const STATUS_PRIORITY = { paid: 3, overdue: 2, pending: 1, blank: 0 };
 
+  // Nomes que têm pelo menos uma UC ativa — usados para detectar migração de UC
+  const activeNomes = new Set(
+    clientes.filter(c => !ugUCs.has(c.uc) && !c.inativo).map(c => c.nome)
+  );
+
   const entitiesRaw = clientes
     .filter(c => !ugUCs.has(c.uc))
-    .filter(c => !c.inativo || hasUnpaidReceita(c.uc, rdReceitas, meses))
-    .map(c => ({ nome: c.nome, uc: c.uc, isUG: false, cells: buildCells(c.uc, false) }));
+    .filter(c =>
+      !c.inativo ||
+      activeNomes.has(c.nome) ||          // UC antiga: mantém histórico se o cliente ainda está ativo com nova UC
+      hasUnpaidReceita(c.uc, rdReceitas, meses)  // cliente genuinamente inativo mas com fatura em aberto
+    )
+    .map(c => {
+      const cells = buildCells(c.uc, false);
+      // Se existe UC antiga mapeada, mescla dados históricos (pré-migração de abril/26)
+      const ucAntiga = ucAntigaMap[c.uc];
+      if (ucAntiga) {
+        const oldCells = buildCells(ucAntiga, false);
+        for (const mes of meses) {
+          const a = cells[mes] || { status: "blank" };
+          const b = oldCells[mes] || { status: "blank" };
+          if ((STATUS_PRIORITY[b.status] ?? 0) > (STATUS_PRIORITY[a.status] ?? 0)) {
+            cells[mes] = b;
+          }
+        }
+      }
+      return { nome: c.nome, uc: c.uc, isUG: false, cells };
+    });
 
   // Mescla células de duas entidades com o mesmo nome, priorizando o status mais informativo
   const byNome = new Map();
@@ -145,10 +169,23 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, hoje = new Da
   const entities = Array.from(byNome.values())
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
-  // UGs — 7 entidades fixas, UC via mapa
+  // UGs — 7 entidades fixas; cada UG pode ter UC antiga + UC nova, mesclamos as células
   const ugs = UG_NOMES.map(nome => {
-    const uc = Object.entries(ugCodeMap).find(([, n]) => n === nome)?.[0] || "";
-    return { nome, uc, isUG: true, cells: buildCells(uc, true) };
+    const ugUcCodes = Object.entries(ugCodeMap)
+      .filter(([, n]) => n === nome)
+      .map(([uc]) => uc);
+
+    const allCells = ugUcCodes.map(uc => buildCells(uc, true));
+    const cells = {};
+    for (const mes of meses) {
+      cells[mes] = allCells.reduce((best, c) => {
+        const cell = c[mes] || { status: "blank" };
+        return (STATUS_PRIORITY[cell.status] ?? 0) > (STATUS_PRIORITY[best.status] ?? 0) ? cell : best;
+      }, { status: "blank" });
+    }
+
+    const primaryUC = ugUcCodes[ugUcCodes.length - 1] || "";
+    return { nome, uc: primaryUC, isUG: true, cells };
   });
 
   return { entities, ugs, meses };
