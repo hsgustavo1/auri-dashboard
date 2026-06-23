@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
+import { createPortal } from "react-dom";
 
 const fmtBRL = v =>
   v != null
@@ -12,8 +13,20 @@ function StatusIcon({ status }) {
   return <span className="text-forest-300 text-xs leading-none">–</span>;
 }
 
-function TooltipContent({ cell }) {
+// Renderizado em document.body via portal para escapar do overflow-x-auto da tabela.
+function Tooltip({ cell, anchorRef }) {
   if (cell.status === "blank") return null;
+
+  const rect = anchorRef.current?.getBoundingClientRect();
+  if (!rect) return null;
+
+  const cellCenterX = rect.left + rect.width / 2;
+  const cellTopY    = rect.top;
+
+  // Mantém o tooltip dentro da viewport (estimativa de metade da largura = 90px)
+  const halfW     = 90;
+  const clampedX  = Math.max(halfW + 8, Math.min(window.innerWidth - halfW - 8, cellCenterX));
+  const arrowShift = cellCenterX - clampedX; // desloca a seta para apontar à célula
 
   let line1;
   if (cell.status === "paid" && cell.fatAuriFallback) {
@@ -24,28 +37,43 @@ function TooltipContent({ cell }) {
     line1 = `Vence em: ${cell.vencimento || "–"}`;
   }
 
-  return (
-    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 whitespace-nowrap rounded bg-forest-900 text-cream text-xs px-2.5 py-1.5 shadow-auri-md pointer-events-none">
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        left: clampedX,
+        top: cellTopY,
+        transform: "translate(-50%, calc(-100% - 8px))",
+        zIndex: 9999,
+      }}
+      className="whitespace-nowrap rounded bg-forest-900 text-cream text-xs px-2.5 py-1.5 shadow-auri-md pointer-events-none"
+    >
       <div className="font-medium">{line1}</div>
       {cell.valor != null && (
         <div className="text-forest-300 mt-0.5">{fmtBRL(cell.valor)}</div>
       )}
-      <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-forest-900" />
-    </div>
+      <div
+        className="absolute top-full border-4 border-transparent border-t-forest-900"
+        style={{ left: "50%", transform: `translateX(calc(-50% + ${arrowShift}px))` }}
+      />
+    </div>,
+    document.body
   );
 }
 
 export default function FaturaCell({ cell }) {
   const [hover, setHover] = useState(false);
+  const tdRef = useRef(null);
 
   return (
     <td
+      ref={tdRef}
       className="relative text-center py-2 px-3 border border-forest-900/10 min-w-[52px]"
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
       <StatusIcon status={cell.status} />
-      {hover && <TooltipContent cell={cell} />}
+      {hover && <Tooltip cell={cell} anchorRef={tdRef} />}
     </td>
   );
 }
