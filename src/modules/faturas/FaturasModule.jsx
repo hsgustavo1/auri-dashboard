@@ -47,7 +47,7 @@ export default function FaturasModule() {
       </div>
 
       <FaturaMatrix entities={data.entities} ugs={data.ugs} meses={data.meses} />
-      <FaturaHeatmap heatmap={data.heatmap} />
+      <FaturaHeatmap entities={data.entities} ugs={data.ugs} meses={data.meses} />
     </div>
   );
 }

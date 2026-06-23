@@ -204,7 +204,8 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
  * @param {Array} entities — pode combinar entities + ugs do buildFaturaMatrix
  * @returns {{ day: number, esperado: number, realizado: number }[]} — 31 entradas
  */
-export function buildHeatmapData(entities) {
+// mesFiltro: "MM/YYYY" para filtrar um mês específico; null = todos os meses
+export function buildHeatmapData(entities, mesFiltro = null) {
   const counts = Array.from({ length: 31 }, (_, i) => ({
     day: i + 1,
     esperado: 0, realizado: 0,
@@ -212,7 +213,11 @@ export function buildHeatmapData(entities) {
   }));
 
   for (const entity of entities) {
-    for (const cell of Object.values(entity.cells || {})) {
+    const cells = mesFiltro
+      ? (entity.cells[mesFiltro] ? [entity.cells[mesFiltro]] : [])
+      : Object.values(entity.cells || {});
+
+    for (const cell of cells) {
       if (cell.status === "blank") continue;
       const dayVenc = extractDay(cell.vencimento);
       if (dayVenc) {

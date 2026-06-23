@@ -1,8 +1,10 @@
+import { useState, useMemo } from "react";
 import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from "recharts";
+import { buildHeatmapData } from "../../utils/faturasLogic";
 
 const fmtBRL = v =>
   v == null ? "–" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
@@ -35,6 +37,19 @@ function TooltipValor({ active, payload, label }) {
   );
 }
 
+function TooltipEvolucao({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const pct = payload[0]?.value;
+  return (
+    <div className="rounded bg-forest-900 text-cream text-xs px-2.5 py-1.5 shadow-auri-md">
+      <div className="font-medium mb-1">Dia {label}</div>
+      <div style={{ color: "rgba(212,163,70,0.95)" }}>
+        Recebido acumulado: {pct != null ? pct.toFixed(1) : "–"}%
+      </div>
+    </div>
+  );
+}
+
 function Chart({ data, title, children, yTickFormatter }) {
   return (
     <div>
@@ -56,36 +71,46 @@ function Chart({ data, title, children, yTickFormatter }) {
 const legendFormatter = key =>
   key === "esperado" || key === "esperadoValor" ? "Esperado (vencimento)" : "Realizado (efetivação)";
 
-function TooltipEvolucao({ active, payload, label }) {
-  if (!active || !payload?.length) return null;
-  const pct = payload[0]?.value;
-  return (
-    <div className="rounded bg-forest-900 text-cream text-xs px-2.5 py-1.5 shadow-auri-md">
-      <div className="font-medium mb-1">Dia {label}</div>
-      <div style={{ color: "rgba(212,163,70,0.95)" }}>
-        Recebido acumulado: {pct != null ? pct.toFixed(1) : "–"}%
-      </div>
-    </div>
-  );
+// Formata "MM/YYYY" → "Mmm/YY" para o seletor
+function fmtMes(mes) {
+  const meses = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
+  const [mm, yyyy] = mes.split("/");
+  return `${meses[parseInt(mm, 10) - 1]}/${yyyy.slice(2)}`;
 }
 
-export default function FaturaHeatmap({ heatmap }) {
-  // Evolução cumulativa: % do total esperado (valor) recebido até cada dia
+export default function FaturaHeatmap({ entities, ugs, meses }) {
+  const allEntities = useMemo(() => [...(entities || []), ...(ugs || [])], [entities, ugs]);
+  const mesPadrao = meses?.[meses.length - 1] ?? null;
+  const [mesSelecionado, setMesSelecionado] = useState(mesPadrao);
+
+  const heatmap = useMemo(
+    () => buildHeatmapData(allEntities, mesSelecionado),
+    [allEntities, mesSelecionado]
+  );
+
   const totalEsperado = heatmap.reduce((s, d) => s + d.esperadoValor, 0);
   let cumul = 0;
   const evolucao = heatmap.map(d => {
     cumul += d.realizadoValor;
-    return {
-      day: d.day,
-      pct: totalEsperado > 0 ? (cumul / totalEsperado) * 100 : 0,
-    };
+    return { day: d.day, pct: totalEsperado > 0 ? (cumul / totalEsperado) * 100 : 0 };
   });
 
   return (
     <div className="mt-6 space-y-5">
-      <h3 className="text-sm font-medium text-forest-400 uppercase tracking-wider">
-        Distribuição por Dia do Mês
-      </h3>
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-medium text-forest-400 uppercase tracking-wider">
+          Distribuição por Dia do Mês
+        </h3>
+        <select
+          value={mesSelecionado ?? ""}
+          onChange={e => setMesSelecionado(e.target.value || null)}
+          className="text-xs border border-forest-900/20 rounded px-2 py-1 bg-white/60 text-forest-700 focus:outline-none"
+        >
+          {meses?.map(m => (
+            <option key={m} value={m}>{fmtMes(m)}</option>
+          ))}
+        </select>
+      </div>
 
       <Chart title="Quantidade de faturas" data={heatmap}>
         <Tooltip content={<TooltipQtd />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
