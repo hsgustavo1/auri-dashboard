@@ -118,10 +118,31 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, hoje = new Da
   }
 
   // Clientes regulares (excluindo UCs que são geradoras)
-  const entities = clientes
+  // Um mesmo cliente pode ter duas linhas no sheet: UC antiga (pré-Abr/26) e UC nova.
+  // Mesclamos por nome para mostrar o histórico completo em uma única linha.
+  const STATUS_PRIORITY = { paid: 3, overdue: 2, pending: 1, blank: 0 };
+
+  const entitiesRaw = clientes
     .filter(c => !ugUCs.has(c.uc))
     .filter(c => !c.inativo || hasUnpaidReceita(c.uc, rdReceitas, meses))
-    .map(c => ({ nome: c.nome, uc: c.uc, isUG: false, cells: buildCells(c.uc, false) }))
+    .map(c => ({ nome: c.nome, uc: c.uc, isUG: false, cells: buildCells(c.uc, false) }));
+
+  // Mescla células de duas entidades com o mesmo nome, priorizando o status mais informativo
+  const byNome = new Map();
+  for (const entity of entitiesRaw) {
+    if (!byNome.has(entity.nome)) {
+      byNome.set(entity.nome, { ...entity, cells: { ...entity.cells } });
+    } else {
+      const existing = byNome.get(entity.nome);
+      for (const mes of meses) {
+        const a = existing.cells[mes] || { status: "blank" };
+        const b = entity.cells[mes]   || { status: "blank" };
+        existing.cells[mes] = (STATUS_PRIORITY[a.status] ?? 0) >= (STATUS_PRIORITY[b.status] ?? 0) ? a : b;
+      }
+    }
+  }
+
+  const entities = Array.from(byNome.values())
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
   // UGs — 7 entidades fixas, UC via mapa
