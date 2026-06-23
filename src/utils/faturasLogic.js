@@ -34,7 +34,7 @@ export function deriveCellStatus(receitas, hoje = new Date()) {
 
   // Pago: qualquer receita com efetivacao preenchida tem prioridade
   const paga = receitas.find(r => r.efetivacao && r.efetivacao.trim() !== "");
-  if (paga) return { status: "paid", efetivacao: paga.efetivacao, valor: paga.valor };
+  if (paga) return { status: "paid", efetivacao: paga.efetivacao, vencimento: paga.vencimento, valor: paga.valor };
 
   const r = receitas[0];
   const vencDate = parseDateBR(r.vencimento);
