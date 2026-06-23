@@ -1,6 +1,7 @@
 import { useState } from "react";
 import PainelModule from "./modules/painel/PainelModule";
 import DocsModule from "./modules/docs/DocsModule";
+import FaturasModule from "./modules/faturas/FaturasModule";
 
 // ─── App Global (shell) ──────────────────────────────────────
 // Casca de nível superior. Cada área grande do negócio é um MÓDULO isolado:
@@ -8,8 +9,9 @@ import DocsModule from "./modules/docs/DocsModule";
 //   • Docs       — Auri Docs, etapa de aquisição de clientes
 // Futuros módulos (Faturas, NF, CRM, Financeiro) entram aqui como irmãos.
 const MODULOS = [
-  { id: "painel", label: "Painel", render: () => <PainelModule /> },
-  { id: "docs",   label: "Docs",   render: () => <DocsModule /> },
+  { id: "painel",  label: "Painel",  render: () => <PainelModule /> },
+  { id: "faturas", label: "Faturas", render: () => <FaturasModule /> },
+  { id: "docs",    label: "Docs",    render: () => <DocsModule /> },
 ];
 
 function ModuloBtn({ ativo, onClick, children }) {
