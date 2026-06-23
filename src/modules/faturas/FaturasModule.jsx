@@ -71,7 +71,7 @@ export default function FaturasModule() {
         {TABS.map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => { setActiveTab(tab.id); if (tab.id === "geral") setFiltro(null); }}
             className={[
               "px-4 py-2 text-sm transition-colors -mb-px border-b-2",
               activeTab === tab.id
@@ -80,9 +80,6 @@ export default function FaturasModule() {
             ].join(" ")}
           >
             {tab.label}
-            {tab.id === "detalhe" && filtro && (
-              <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-amber-500 align-middle" />
-            )}
           </button>
         ))}
       </div>
