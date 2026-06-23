@@ -1,3 +1,5 @@
+import { UG_NOMES, UC_GERADORA_NOVA, UC_GERADORA_ANTIGA } from "../config";
+
 // Parseia "DD/MM/YYYY" para Date (local time) sem dependência de timezone
 function parseDateBR(str) {
   if (!str) return null;
@@ -44,4 +46,110 @@ export function deriveCellStatus(receitas, hoje = new Date()) {
   }
 
   return { status: "pending", vencimento: r.vencimento, valor: r.valor };
+}
+
+// Mapa UC code → nome da UG (combina códigos antigos e novos)
+function buildUGCodeMap() {
+  const map = {};
+  Object.entries(UC_GERADORA_NOVA).forEach(([uc, nome]) => { map[uc] = nome; });
+  Object.entries(UC_GERADORA_ANTIGA).forEach(([uc, nome]) => { map[uc] = nome; });
+  return map;
+}
+
+// Extrai dia do mês de "DD/MM/YYYY"; retorna null se inválido
+function extractDay(dateStr) {
+  if (!dateStr) return null;
+  const d = parseInt(dateStr.split("/")[0], 10);
+  return d >= 1 && d <= 31 ? d : null;
+}
+
+// Verifica se um UC tem receita não paga (sem efetivacao) nos meses fornecidos
+function hasUnpaidReceita(uc, rdReceitas, meses) {
+  return meses.some(mes =>
+    rdReceitas.some(r => r.uc === uc && r.mes === mes && (!r.efetivacao || r.efetivacao.trim() === ""))
+  );
+}
+
+/**
+ * Constrói os dados completos da matriz de faturas.
+ *
+ * @param {object} params
+ * @param {Array}  params.rdRows      — saída de parseRDEquatorial (todos os tipos)
+ * @param {Array}  params.clientes    — saída de parseClientes
+ * @param {object} params.fatAuriData — saída de parseFatAuri, indexado por uc → mes → { faturaAuri, ... }
+ * @param {Date}   params.hoje
+ *
+ * @returns {{ entities: Entity[], ugs: Entity[], meses: string[] }}
+ *   Entity: { nome, uc, isUG, cells: { [mes]: CellResult } }
+ *   CellResult: { status, efetivacao?, vencimento?, valor?, fatAuriFallback? }
+ */
+export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, hoje = new Date() }) {
+  const ugCodeMap = buildUGCodeMap();
+  const ugUCs = new Set(Object.keys(ugCodeMap));
+  const meses = getLast12Months(hoje);
+
+  // Apenas Receitas, agrupadas por UC → mes
+  const rdReceitas = rdRows.filter(r => r.tipo === "Receita");
+  const rdPorUC = {};
+  rdReceitas.forEach(r => {
+    if (!rdPorUC[r.uc]) rdPorUC[r.uc] = {};
+    if (!rdPorUC[r.uc][r.mes]) rdPorUC[r.uc][r.mes] = [];
+    rdPorUC[r.uc][r.mes].push(r);
+  });
+
+  // Células para um UC, com fallback fatAuri opcional (para UGs)
+  function buildCells(uc, useFatAuriFallback) {
+    const cells = {};
+    for (const mes of meses) {
+      const rows = rdPorUC[uc]?.[mes] || [];
+      if (rows.length > 0) {
+        cells[mes] = deriveCellStatus(rows, hoje);
+      } else if (useFatAuriFallback && fatAuriData[uc]?.[mes]?.faturaAuri > 0) {
+        cells[mes] = {
+          status: "paid",
+          valor: fatAuriData[uc][mes].faturaAuri,
+          fatAuriFallback: true,
+        };
+      } else {
+        cells[mes] = { status: "blank" };
+      }
+    }
+    return cells;
+  }
+
+  // Clientes regulares (excluindo UCs que são geradoras)
+  const entities = clientes
+    .filter(c => !ugUCs.has(c.uc))
+    .filter(c => !c.inativo || hasUnpaidReceita(c.uc, rdReceitas, meses))
+    .map(c => ({ nome: c.nome, uc: c.uc, isUG: false, cells: buildCells(c.uc, false) }))
+    .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+
+  // UGs — 7 entidades fixas, UC via mapa
+  const ugs = UG_NOMES.map(nome => {
+    const uc = Object.entries(ugCodeMap).find(([, n]) => n === nome)?.[0] || "";
+    return { nome, uc, isUG: true, cells: buildCells(uc, true) };
+  });
+
+  return { entities, ugs, meses };
+}
+
+/**
+ * Agrega vencimentos e efetivacoes por dia do mês para o heatmap.
+ * @param {Array} entities — pode combinar entities + ugs do buildFaturaMatrix
+ * @returns {{ day: number, esperado: number, realizado: number }[]} — 31 entradas
+ */
+export function buildHeatmapData(entities) {
+  const counts = Array.from({ length: 31 }, (_, i) => ({ day: i + 1, esperado: 0, realizado: 0 }));
+
+  for (const entity of entities) {
+    for (const cell of Object.values(entity.cells || {})) {
+      if (cell.status === "blank") continue;
+      const dayVenc = extractDay(cell.vencimento);
+      if (dayVenc) counts[dayVenc - 1].esperado++;
+      const dayEfet = extractDay(cell.efetivacao);
+      if (dayEfet) counts[dayEfet - 1].realizado++;
+    }
+  }
+
+  return counts;
 }
