@@ -9,6 +9,15 @@ import { buildHeatmapData } from "../../utils/faturasLogic";
 const fmtBRL = v =>
   v == null ? "–" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
+const SERIES_LABEL = {
+  esperado:            "Esperado (vencimento)",
+  realizado:           "Recebido no prazo",
+  realizadoAntes:      "Recebido c/ atraso (mês ant.)",
+  esperadoValor:       "Esperado (vencimento)",
+  realizadoValor:      "Recebido no prazo",
+  realizadoAntesValor: "Recebido c/ atraso (mês ant.)",
+};
+
 function TooltipQtd({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   return (
@@ -16,7 +25,7 @@ function TooltipQtd({ active, payload, label }) {
       <div className="font-medium mb-1">Dia {label}</div>
       {payload.map(p => (
         <div key={p.dataKey} style={{ color: p.fill }}>
-          {p.dataKey === "esperado" ? "Esperado" : "Realizado"}: {p.value}
+          {SERIES_LABEL[p.dataKey] ?? p.dataKey}: {p.value}
         </div>
       ))}
     </div>
@@ -30,7 +39,7 @@ function TooltipValor({ active, payload, label }) {
       <div className="font-medium mb-1">Dia {label}</div>
       {payload.map(p => (
         <div key={p.dataKey} style={{ color: p.fill }}>
-          {p.dataKey === "esperadoValor" ? "Esperado" : "Realizado"}: {fmtBRL(p.value)}
+          {SERIES_LABEL[p.dataKey] ?? p.dataKey}: {fmtBRL(p.value)}
         </div>
       ))}
     </div>
@@ -68,8 +77,7 @@ function Chart({ data, title, children, yTickFormatter }) {
   );
 }
 
-const legendFormatter = key =>
-  key === "esperado" || key === "esperadoValor" ? "Esperado (vencimento)" : "Realizado (efetivação)";
+const legendFormatter = key => SERIES_LABEL[key] ?? key;
 
 // Formata "MM/YYYY" → "Mmm/YY" para o seletor
 function fmtMes(mes) {
@@ -91,7 +99,7 @@ export default function FaturaHeatmap({ entities, ugs, meses }) {
   const totalEsperado = heatmap.reduce((s, d) => s + d.esperadoValor, 0);
   let cumul = 0;
   const evolucao = heatmap.map(d => {
-    cumul += d.realizadoValor;
+    cumul += d.realizadoValor + d.realizadoAntesValor;
     return { day: d.day, pct: totalEsperado > 0 ? (cumul / totalEsperado) * 100 : 0 };
   });
 
@@ -115,8 +123,9 @@ export default function FaturaHeatmap({ entities, ugs, meses }) {
       <Chart title="Quantidade de faturas" data={heatmap}>
         <Tooltip content={<TooltipQtd />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={legendFormatter} />
-        <Bar dataKey="esperado"  fill="rgba(30,74,54,0.4)"   radius={[2, 2, 0, 0]} />
-        <Bar dataKey="realizado" fill="rgba(212,163,70,0.85)" radius={[2, 2, 0, 0]} />
+        <Bar dataKey="esperado"       fill="rgba(30,74,54,0.4)"    radius={[2, 2, 0, 0]} />
+        <Bar dataKey="realizado"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} />
+        <Bar dataKey="realizadoAntes" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} />
       </Chart>
 
       <Chart
@@ -126,8 +135,9 @@ export default function FaturaHeatmap({ entities, ugs, meses }) {
       >
         <Tooltip content={<TooltipValor />} cursor={{ fill: "rgba(0,0,0,0.04)" }} />
         <Legend wrapperStyle={{ fontSize: 12, paddingTop: 8 }} formatter={legendFormatter} />
-        <Bar dataKey="esperadoValor"  fill="rgba(30,74,54,0.4)"   radius={[2, 2, 0, 0]} />
-        <Bar dataKey="realizadoValor" fill="rgba(212,163,70,0.85)" radius={[2, 2, 0, 0]} />
+        <Bar dataKey="esperadoValor"       fill="rgba(30,74,54,0.4)"    radius={[2, 2, 0, 0]} />
+        <Bar dataKey="realizadoValor"      stackId="rec" fill="rgba(212,163,70,0.85)" radius={[0, 0, 0, 0]} />
+        <Bar dataKey="realizadoAntesValor" stackId="rec" fill="rgba(200,90,40,0.85)"  radius={[2, 2, 0, 0]} />
       </Chart>
 
       <div>

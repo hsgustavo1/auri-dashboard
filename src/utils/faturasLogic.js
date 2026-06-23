@@ -206,8 +206,12 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
 export function buildHeatmapData(entities, mesFiltro = null) {
   const counts = Array.from({ length: 31 }, (_, i) => ({
     day: i + 1,
-    esperado: 0, realizado: 0,
-    esperadoValor: 0, realizadoValor: 0,
+    esperado: 0,
+    realizado: 0,          // pago no mês do vencimento (no prazo)
+    realizadoAntes: 0,     // pago neste mês, mas vencimento era de mês anterior
+    esperadoValor: 0,
+    realizadoValor: 0,
+    realizadoAntesValor: 0,
   }));
 
   for (const entity of entities) {
@@ -223,14 +227,22 @@ export function buildHeatmapData(entities, mesFiltro = null) {
         }
       }
 
-      // Realizado: filtra pelo mês de efetivação (pode diferir do mês de vencimento)
+      // Realizado: filtra pelo mês de efetivação
+      // Separa entre pagamentos no prazo (efetivação no mesmo mês do vencimento)
+      // e pagamentos de meses anteriores (efetivação neste mês, vencimento em outro)
       if (cell.efetivacao) {
         const efetMes = getMonthFromDate(cell.efetivacao);
         if (!mesFiltro || efetMes === mesFiltro) {
           const dayEfet = extractDay(cell.efetivacao);
           if (dayEfet) {
-            counts[dayEfet - 1].realizado++;
-            counts[dayEfet - 1].realizadoValor += cell.valor || 0;
+            const isOnTime = efetMes === mes;
+            if (isOnTime) {
+              counts[dayEfet - 1].realizado++;
+              counts[dayEfet - 1].realizadoValor += cell.valor || 0;
+            } else {
+              counts[dayEfet - 1].realizadoAntes++;
+              counts[dayEfet - 1].realizadoAntesValor += cell.valor || 0;
+            }
           }
         }
       }
