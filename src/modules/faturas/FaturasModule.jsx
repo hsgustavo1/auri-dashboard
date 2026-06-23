@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useFaturasData } from "../../hooks/useFaturasData";
+import FaturaCards from "./FaturaCards";
 import FaturaMatrix from "./FaturaMatrix";
 import FaturaHeatmap from "./FaturaHeatmap";
 import FaturaDetalhe from "./FaturaDetalhe";
@@ -89,6 +90,11 @@ export default function FaturasModule() {
       {/* Conteúdo */}
       {activeTab === "geral" && (
         <>
+          <FaturaCards
+            entities={data.entities}
+            ugs={data.ugs}
+            mesAtual={data.meses[data.meses.length - 1]}
+          />
           <FaturaMatrix entities={data.entities} ugs={data.ugs} meses={data.meses} />
           <FaturaHeatmap
             entities={data.entities}

@@ -210,6 +210,45 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
  * @returns {{ day: number, esperado: number, realizado: number }[]} — 31 entradas
  */
 /**
+ * Agrega estatísticas resumidas para os cards do mês atual.
+ *
+ * - recebido: efetivação no mesAtual (independe do mês de ref.)
+ * - esperado: vencimento real no mesAtual com status pendente
+ * - atrasado: status overdue em qualquer mês da janela
+ */
+export function buildSummaryStats(entities, ugs, mesAtual) {
+  const all = [...(entities || []), ...(ugs || [])];
+  const stats = {
+    recebido: { qtd: 0, valor: 0 },
+    esperado: { qtd: 0, valor: 0 },
+    atrasado: { qtd: 0, valor: 0 },
+  };
+
+  for (const entity of all) {
+    for (const cell of Object.values(entity.cells || {})) {
+      if (cell.status === "blank") continue;
+
+      if (cell.efetivacao && getMonthFromDate(cell.efetivacao) === mesAtual) {
+        stats.recebido.qtd++;
+        stats.recebido.valor += cell.valor || 0;
+      }
+
+      if (cell.status === "pending" && getMonthFromDate(cell.vencimento) === mesAtual) {
+        stats.esperado.qtd++;
+        stats.esperado.valor += cell.valor || 0;
+      }
+
+      if (cell.status === "overdue") {
+        stats.atrasado.qtd++;
+        stats.atrasado.valor += cell.valor || 0;
+      }
+    }
+  }
+
+  return stats;
+}
+
+/**
  * Retorna lista plana de faturas que correspondem ao filtro de clique do heatmap.
  *
  * filtro: { mes: "MM/YYYY", dia: number, serie: "esperado"|"realizado"|"realizadoAntes" }
