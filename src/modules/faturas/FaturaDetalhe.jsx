@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { buildDetailRows } from "../../utils/faturasLogic";
 
 const MONTH_NAMES = ["Jan","Fev","Mar","Abr","Mai","Jun","Jul","Ago","Set","Out","Nov","Dez"];
@@ -13,11 +13,11 @@ const fmtBRL = v =>
   v == null ? "–" : v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
 
 const CARD_LABEL = {
-  geradas:           "Faturas do mês",
-  noPrazo:           "Recebidas no prazo",
-  emAtraso:          "Recebidas em atraso",
-  aguardandoMes:     "Aguardando pagamento · mês atual",
-  aguardandoAnterior:"Aguardando pagamento · meses anteriores",
+  geradas:            "Faturas do mês",
+  noPrazo:            "Recebidas no prazo",
+  emAtraso:           "Recebidas em atraso",
+  aguardandoMes:      "Aguardando pagamento · mês atual",
+  aguardandoAnterior: "Aguardando pagamento · meses anteriores",
 };
 
 const STATUS_LABEL = { paid: "Pago", pending: "Pendente", overdue: "Atrasado" };
@@ -38,11 +38,39 @@ const TIPO_CLS = {
   realizadoAntes: "text-orange-700 bg-orange-50 border border-orange-200",
 };
 
+const SELECT_CLS =
+  "text-xs border border-forest-900/20 rounded-lg px-2.5 py-1.5 bg-white text-forest-700 " +
+  "focus:outline-none focus:ring-1 focus:ring-forest-500 cursor-pointer";
+
 export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) {
-  const rows = useMemo(
+  const [fMes,    setFMes]    = useState("");
+  const [fTipo,   setFTipo]   = useState("");
+  const [fStatus, setFStatus] = useState("");
+
+  const baseRows = useMemo(
     () => buildDetailRows(entities, ugs, filtro),
     [entities, ugs, filtro]
   );
+
+  // Meses disponíveis para o select (ordem cronológica)
+  const mesesDisponiveis = useMemo(() => {
+    const set = new Set(baseRows.map(r => r.vencMes).filter(Boolean));
+    return [...set].sort((a, b) => {
+      const [ma, ya] = a.split("/"); const [mb, yb] = b.split("/");
+      return (Number(ya) * 12 + Number(ma)) - (Number(yb) * 12 + Number(mb));
+    });
+  }, [baseRows]);
+
+  const rows = useMemo(() => {
+    let r = baseRows;
+    if (fMes)    r = r.filter(x => x.vencMes === fMes);
+    if (fTipo)   r = r.filter(x => x.tipo    === fTipo);
+    if (fStatus) r = r.filter(x => x.status  === fStatus);
+    return r;
+  }, [baseRows, fMes, fTipo, fStatus]);
+
+  const hasLocalFilter = fMes || fTipo || fStatus;
+  const clearLocal = () => { setFMes(""); setFTipo(""); setFStatus(""); };
 
   const filtroDesc = filtro
     ? filtro.card
@@ -57,22 +85,56 @@ export default function FaturaDetalhe({ entities, ugs, filtro, onClearFiltro }) 
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-4 flex-wrap">
-        {filtroDesc ? (
-          <div className="flex items-center gap-2 text-xs bg-forest-900/5 border border-forest-900/20 rounded-full px-3 py-1">
-            <span className="text-forest-600 font-medium">{filtroDesc}</span>
+      {/* Barra superior: chip de origem + filtros + contagem */}
+      <div className="flex items-start gap-3 mb-4 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap flex-1">
+          {/* Chip do filtro de origem (card / heatmap) */}
+          {filtroDesc ? (
+            <div className="flex items-center gap-2 text-xs bg-forest-900/5 border border-forest-900/20 rounded-full px-3 py-1">
+              <span className="text-forest-600 font-medium">{filtroDesc}</span>
+              <button
+                onClick={onClearFiltro}
+                className="text-forest-400 hover:text-forest-700 transition-colors text-base leading-none"
+                title="Limpar origem"
+              >×</button>
+            </div>
+          ) : (
+            <span className="text-xs text-forest-400 py-1">Todas as faturas</span>
+          )}
+
+          {/* Selects de filtro local */}
+          <select value={fMes} onChange={e => setFMes(e.target.value)} className={SELECT_CLS}>
+            <option value="">Todos os meses</option>
+            {mesesDisponiveis.map(m => (
+              <option key={m} value={m}>{fmtMes(m)}</option>
+            ))}
+          </select>
+
+          <select value={fTipo} onChange={e => setFTipo(e.target.value)} className={SELECT_CLS}>
+            <option value="">Todos os tipos</option>
+            <option value="esperado">Esperado</option>
+            <option value="realizado">No prazo</option>
+            <option value="realizadoAntes">Com atraso</option>
+          </select>
+
+          <select value={fStatus} onChange={e => setFStatus(e.target.value)} className={SELECT_CLS}>
+            <option value="">Todos os status</option>
+            <option value="paid">Pago</option>
+            <option value="pending">Pendente</option>
+            <option value="overdue">Atrasado</option>
+          </select>
+
+          {hasLocalFilter && (
             <button
-              onClick={onClearFiltro}
-              className="text-forest-400 hover:text-forest-700 transition-colors text-base leading-none"
-              title="Limpar filtro"
+              onClick={clearLocal}
+              className="text-xs text-forest-400 hover:text-forest-700 transition-colors underline"
             >
-              ×
+              Limpar filtros
             </button>
-          </div>
-        ) : (
-          <span className="text-xs text-forest-400">Todas as faturas</span>
-        )}
-        <span className="text-xs text-forest-400 ml-auto">
+          )}
+        </div>
+
+        <span className="text-xs text-forest-400 whitespace-nowrap pt-1">
           {rows.length} registro{rows.length !== 1 ? "s" : ""}
           {totalValor > 0 && <> · {fmtBRL(totalValor)}</>}
         </span>
