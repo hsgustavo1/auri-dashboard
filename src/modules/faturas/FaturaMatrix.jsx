@@ -9,10 +9,18 @@ function mesLabel(mes) {
 }
 
 function EntityRow({ entity, meses }) {
+  const ucTitle = entity.isUG
+    ? null
+    : entity.ucAntiga
+    ? `UC nova: ${entity.uc} · UC ant.: ${entity.ucAntiga}`
+    : `UC: ${entity.uc}`;
+
   return (
     <tr className="hover:bg-forest-900/5 transition-colors">
       <td className="sticky left-0 bg-cream px-3 py-1.5 text-sm whitespace-nowrap border-r border-forest-900/20 min-w-[180px] max-w-[240px] truncate">
-        {entity.nome}
+        <span title={ucTitle ?? undefined} className={ucTitle ? "cursor-help" : undefined}>
+          {entity.nome}
+        </span>
       </td>
       {meses.map(mes => (
         <FaturaCell key={mes} cell={entity.cells[mes] || { status: "blank" }} />

@@ -63,6 +63,14 @@ function extractDay(dateStr) {
   return d >= 1 && d <= 31 ? d : null;
 }
 
+// Extrai "MM/YYYY" de "DD/MM/YYYY"; retorna null se inválido
+function getMonthFromDate(dateStr) {
+  if (!dateStr) return null;
+  const parts = dateStr.split("/");
+  if (parts.length !== 3) return null;
+  return `${parts[1]}/${parts[2]}`;
+}
+
 // Verifica se um UC tem receita não paga (sem efetivacao) nos meses fornecidos
 function hasUnpaidReceita(uc, rdReceitas, meses) {
   return meses.some(mes =>
@@ -117,56 +125,37 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
     return cells;
   }
 
-  // Clientes regulares (excluindo UCs que são geradoras)
-  // Um mesmo cliente pode ter duas linhas no sheet: UC antiga (pré-Abr/26) e UC nova.
-  // Mesclamos por nome para mostrar o histórico completo em uma única linha.
   const STATUS_PRIORITY = { paid: 3, overdue: 2, pending: 1, blank: 0 };
 
-  // Nomes que têm pelo menos uma UC ativa — usados para detectar migração de UC
-  const activeNomes = new Set(
-    clientes.filter(c => !ugUCs.has(c.uc) && !c.inativo).map(c => c.nome)
-  );
-
-  const entitiesRaw = clientes
+  // Cada linha ativa do sheet é uma entidade independente — clientes com múltiplas UCs
+  // (ex: dois imóveis) aparecem como linhas separadas. O histórico pré-migração de UC é
+  // incorporado via ucAntigaMap diretamente na linha ativa, sem precisar de merge por nome.
+  const entities = clientes
     .filter(c => !ugUCs.has(c.uc))
-    .filter(c =>
-      !c.inativo ||
-      activeNomes.has(c.nome) ||          // UC antiga: mantém histórico se o cliente ainda está ativo com nova UC
-      hasUnpaidReceita(c.uc, rdReceitas, meses)  // cliente genuinamente inativo mas com fatura em aberto
-    )
+    .filter(c => !c.inativo || hasUnpaidReceita(c.uc, rdReceitas, meses))
     .map(c => {
       const cells = buildCells(c.uc, false);
-      // Se existe UC antiga mapeada, mescla dados históricos (pré-migração de abril/26)
+      // Mescla dados históricos da UC antiga (pré-migração abr/26), se existir
       const ucAntiga = ucAntigaMap[c.uc];
+      let ucAntigaAtiva = null;
       if (ucAntiga) {
         const oldCells = buildCells(ucAntiga, false);
+        let hasOldData = false;
         for (const mes of meses) {
           const a = cells[mes] || { status: "blank" };
           const b = oldCells[mes] || { status: "blank" };
           if ((STATUS_PRIORITY[b.status] ?? 0) > (STATUS_PRIORITY[a.status] ?? 0)) {
             cells[mes] = b;
+            hasOldData = true;
+          } else if (b.status !== "blank") {
+            hasOldData = true;
           }
         }
+        // Só expõe ucAntiga no tooltip enquanto ainda há dados dela na janela de 12 meses
+        if (hasOldData) ucAntigaAtiva = ucAntiga;
       }
-      return { nome: c.nome, uc: c.uc, isUG: false, cells };
-    });
-
-  // Mescla células de duas entidades com o mesmo nome, priorizando o status mais informativo
-  const byNome = new Map();
-  for (const entity of entitiesRaw) {
-    if (!byNome.has(entity.nome)) {
-      byNome.set(entity.nome, { ...entity, cells: { ...entity.cells } });
-    } else {
-      const existing = byNome.get(entity.nome);
-      for (const mes of meses) {
-        const a = existing.cells[mes] || { status: "blank" };
-        const b = entity.cells[mes]   || { status: "blank" };
-        existing.cells[mes] = (STATUS_PRIORITY[a.status] ?? 0) >= (STATUS_PRIORITY[b.status] ?? 0) ? a : b;
-      }
-    }
-  }
-
-  const entities = Array.from(byNome.values())
+      return { nome: c.nome, uc: c.uc, ucAntiga: ucAntigaAtiva, isUG: false, cells };
+    })
     .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
 
   // Nome do cliente real para cada UC de UG (vem da aba clientes)
@@ -204,7 +193,16 @@ export function buildFaturaMatrix({ rdRows, clientes, fatAuriData, ucAntigaMap =
  * @param {Array} entities — pode combinar entities + ugs do buildFaturaMatrix
  * @returns {{ day: number, esperado: number, realizado: number }[]} — 31 entradas
  */
-// mesFiltro: "MM/YYYY" para filtrar um mês específico; null = todos os meses
+/**
+ * Agrega vencimentos e efetivações por dia do mês para o heatmap.
+ *
+ * Esperado: agrupa por mês de vencimento (quando a fatura era devida).
+ * Realizado: agrupa por mês de efetivação (quando o pagamento entrou de fato),
+ *   independente do mês de vencimento — uma fatura de mai/26 paga em jun/26
+ *   aparece no realizado de junho, não de maio.
+ *
+ * mesFiltro: "MM/YYYY" para filtrar um mês específico; null = todos os meses
+ */
 export function buildHeatmapData(entities, mesFiltro = null) {
   const counts = Array.from({ length: 31 }, (_, i) => ({
     day: i + 1,
@@ -213,21 +211,28 @@ export function buildHeatmapData(entities, mesFiltro = null) {
   }));
 
   for (const entity of entities) {
-    const cells = mesFiltro
-      ? (entity.cells[mesFiltro] ? [entity.cells[mesFiltro]] : [])
-      : Object.values(entity.cells || {});
-
-    for (const cell of cells) {
+    for (const [mes, cell] of Object.entries(entity.cells || {})) {
       if (cell.status === "blank") continue;
-      const dayVenc = extractDay(cell.vencimento);
-      if (dayVenc) {
-        counts[dayVenc - 1].esperado++;
-        counts[dayVenc - 1].esperadoValor += cell.valor || 0;
+
+      // Esperado: filtra pelo mês de vencimento
+      if (!mesFiltro || mes === mesFiltro) {
+        const dayVenc = extractDay(cell.vencimento);
+        if (dayVenc) {
+          counts[dayVenc - 1].esperado++;
+          counts[dayVenc - 1].esperadoValor += cell.valor || 0;
+        }
       }
-      const dayEfet = extractDay(cell.efetivacao);
-      if (dayEfet) {
-        counts[dayEfet - 1].realizado++;
-        counts[dayEfet - 1].realizadoValor += cell.valor || 0;
+
+      // Realizado: filtra pelo mês de efetivação (pode diferir do mês de vencimento)
+      if (cell.efetivacao) {
+        const efetMes = getMonthFromDate(cell.efetivacao);
+        if (!mesFiltro || efetMes === mesFiltro) {
+          const dayEfet = extractDay(cell.efetivacao);
+          if (dayEfet) {
+            counts[dayEfet - 1].realizado++;
+            counts[dayEfet - 1].realizadoValor += cell.valor || 0;
+          }
+        }
       }
     }
   }
