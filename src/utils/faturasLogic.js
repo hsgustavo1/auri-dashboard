@@ -226,6 +226,7 @@ export function buildDetailRows(entities, ugs, filtro) {
       if (cell.status === "blank") continue;
 
       const vencDia = extractDay(cell.vencimento);
+      const vencMesReal = getMonthFromDate(cell.vencimento); // mês real do vencimento (≠ billing month)
       const efetDia = extractDay(cell.efetivacao);
       const efetMes = getMonthFromDate(cell.efetivacao);
       const tipo = deriveSerie(cell);
@@ -234,14 +235,14 @@ export function buildDetailRows(entities, ugs, filtro) {
       if (!mes) {
         include = true;
       } else if (!dia && !serie) {
-        // Filtro apenas de mês: todas as faturas com vencimento neste mês
-        include = vencMes === mes;
+        // Filtro de mês: usa o mês real do vencimento (não o billing month)
+        include = vencMesReal === mes;
       } else if (dia && !serie) {
-        // Clique num dia: tudo com vencimento OU efetivação neste dia/mês
-        include = (vencMes === mes && vencDia === dia)
-               || (efetMes === mes && efetDia === dia);
+        // Clique num dia: vencimento real neste dia/mês OU efetivação neste dia/mês
+        include = (vencMesReal === mes && vencDia === dia)
+               || (efetMes   === mes && efetDia === dia);
       } else if (serie === "esperado") {
-        include = vencMes === mes && vencDia === dia;
+        include = vencMesReal === mes && vencDia === dia;
       } else if (serie === "realizado") {
         include = efetMes === mes && efetDia === dia && tipo === "realizado";
       } else if (serie === "realizadoAntes") {
@@ -293,8 +294,10 @@ export function buildHeatmapData(entities, mesFiltro = null) {
     for (const [mes, cell] of Object.entries(entity.cells || {})) {
       if (cell.status === "blank") continue;
 
-      // Esperado: filtra pelo mês de vencimento
-      if (!mesFiltro || mes === mesFiltro) {
+      // Esperado: filtra pelo mês da DATA de vencimento (não pelo mês de referência/billing,
+      // que pode diferir — ex: ref. jun/26 com vencimento em 17/07/2026)
+      const vencMesReal = getMonthFromDate(cell.vencimento);
+      if (!mesFiltro || vencMesReal === mesFiltro) {
         const dayVenc = extractDay(cell.vencimento);
         if (dayVenc) {
           counts[dayVenc - 1].esperado++;
