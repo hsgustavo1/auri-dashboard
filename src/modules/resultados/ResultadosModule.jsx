@@ -3,6 +3,7 @@ import {
   LineChart, Line, BarChart, Bar, Cell,
   XAxis, YAxis, ResponsiveContainer, Tooltip, Legend, CartesianGrid, ReferenceLine,
 } from "recharts";
+import KpiBox from "../../components/KpiBox";
 
 // ─── Dados estáticos ─────────────────────────────────────────────────────────
 // Fonte: aba "Resultados UG" da Auribase (gid=527983481).
@@ -166,16 +167,6 @@ function NavBtn({ ativo, onClick, children }) {
   );
 }
 
-function KPI({ label, valor, cor, sub }) {
-  return (
-    <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4">
-      <div className="text-[10px] uppercase tracking-[0.18em] text-stone-500 mb-2 font-mono">{label}</div>
-      <div className="text-3xl font-extrabold tracking-tight" style={{ color: cor ?? "#152a22" }}>{valor}</div>
-      {sub && <div className="text-xs text-stone-400 mt-1">{sub}</div>}
-    </div>
-  );
-}
-
 function Chip({ texto, cor }) {
   return (
     <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-mono uppercase tracking-wide"
@@ -255,12 +246,12 @@ function TelaEvolucao({ dados, meses }) {
     <div className="space-y-6">
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI label={`Resultado — ${ultimoMes}`} valor={fmtBRL0(resUltimo)}
+        <KpiBox label={`Resultado — ${ultimoMes}`} valor={fmtBRL0(resUltimo)}
           cor={resUltimo >= 0 ? "#2f7a52" : "#b04040"}
           sub={`Margem ${fmtPct(margemUltimo)}`} />
-        <KPI label="Receita total — mesmo mês" valor={fmtBRL0(recUltimo)} />
-        <KPI label="Resultado acum. 12m" valor={fmtBRL0(res12m)} cor="#2f7a52" />
-        <KPI label={`Melhor UG — ${ultimoMes}`}
+        <KpiBox label="Receita total — mesmo mês" valor={fmtBRL0(recUltimo)} />
+        <KpiBox label="Resultado acum. 12m" valor={fmtBRL0(res12m)} cor="#2f7a52" />
+        <KpiBox label={`Melhor UG — ${ultimoMes}`}
           valor={melhorUG?.ug ?? "—"}
           cor={COR_UG[melhorUG?.ug]}
           sub={melhorUG ? fmtBRL0(melhorUG.resultado) : ""} />
@@ -368,10 +359,10 @@ function TelaPorUG({ dados, meses }) {
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI label="Receita total (período)" valor={fmtBRL0(recTotal)} />
-        <KPI label="Resultado total (período)" valor={fmtBRL0(resTotal)} cor={resTotal >= 0 ? "#2f7a52" : "#b04040"} />
-        <KPI label="Margem média" valor={fmtPct(margemMedia)} />
-        <KPI label="YOC médio" valor={fmtPct(yocMedio)} cor={COR_UG[ugSel]} />
+        <KpiBox label="Receita total (período)" valor={fmtBRL0(recTotal)} />
+        <KpiBox label="Resultado total (período)" valor={fmtBRL0(resTotal)} cor={resTotal >= 0 ? "#2f7a52" : "#b04040"} />
+        <KpiBox label="Margem média" valor={fmtPct(margemMedia)} />
+        <KpiBox label="YOC médio" valor={fmtPct(yocMedio)} cor={COR_UG[ugSel]} />
       </div>
 
       {/* Gráfico receita + resultado */}
@@ -493,10 +484,10 @@ function TelaDetalhe({ dados, meses }) {
 
       {/* Totais do mês */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KPI label="Receita total" valor={fmtBRL0(totalRec)} />
-        <KPI label="Custo total" valor={fmtBRL0(totalCus)} cor="#b04040" />
-        <KPI label="Despesa total" valor={fmtBRL0(totalDes)} cor="#b04040" />
-        <KPI label="Resultado total" valor={fmtBRL0(totalRes)}
+        <KpiBox label="Receita total" valor={fmtBRL0(totalRec)} />
+        <KpiBox label="Custo total" valor={fmtBRL0(totalCus)} cor="#b04040" />
+        <KpiBox label="Despesa total" valor={fmtBRL0(totalDes)} cor="#b04040" />
+        <KpiBox label="Resultado total" valor={fmtBRL0(totalRes)}
           cor={totalRes >= 0 ? "#2f7a52" : "#b04040"}
           sub={`Margem ${fmtPct(totalRec > 0 ? (totalRes/totalRec)*100 : 0)}`} />
       </div>

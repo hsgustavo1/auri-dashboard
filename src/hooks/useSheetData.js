@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { SHEET_URLS } from "../config";
 import { buildDataset } from "../utils/dataset";
-import { parseHistorico } from "../utils/parsers";
+import { parseHistorico, parseImpostosCSV } from "../utils/parsers";
 import { parseResultadosCSV } from "../utils/parseResultados";
 
 async function fetchCSV(url) {
@@ -49,7 +49,15 @@ export function useSheetData() {
         console.warn("[useSheetData] resultados indisponível:", e.message);
       }
 
-      setState({ data: { clientes, ugsValidadas, planoGlobal, historico, resultados }, loading: false, error: null, lastUpdated: new Date() });
+      // Impostos por mês: fonte opcional, mesma estratégia do histórico/resultados.
+      let impostosPorMes = new Map();
+      try {
+        impostosPorMes = parseImpostosCSV(await fetchCSV(SHEET_URLS.impostos));
+      } catch (e) {
+        console.warn("[useSheetData] impostos indisponível:", e.message);
+      }
+
+      setState({ data: { clientes, ugsValidadas, planoGlobal, historico, resultados, impostosPorMes }, loading: false, error: null, lastUpdated: new Date() });
     } catch (err) {
       setState(s => ({ ...s, loading: false, error: err.message }));
     }

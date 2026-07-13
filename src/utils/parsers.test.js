@@ -164,3 +164,32 @@ describe("parseHistorico", () => {
     expect(parseHistorico(csv)[0].receita_total).toBeNull();
   });
 });
+
+import { parseImpostosCSV } from "./parsers.js";
+
+describe("parseImpostosCSV", () => {
+  it("mapeia mês de referência para valor", () => {
+    const csv = `Mês referência,Mês pagamento,Valor\n06/2026,08/2026,"2.612,27"\n07/2026,09/2026,"3.100,00"`;
+    const result = parseImpostosCSV(csv);
+    expect(result.get("06/2026")).toBeCloseTo(2612.27, 2);
+    expect(result.get("07/2026")).toBeCloseTo(3100.0, 2);
+  });
+
+  it("ignora linhas sem mês de referência preenchido", () => {
+    const csv = `Mês referência,Mês pagamento,Valor\n,,"2.612,27"\n06/2026,08/2026,"3.100,00"`;
+    const result = parseImpostosCSV(csv);
+    expect(result.size).toBe(1);
+    expect(result.get("06/2026")).toBeCloseTo(3100.0, 2);
+  });
+
+  it("ignora linhas com valor inválido", () => {
+    const csv = `Mês referência,Mês pagamento,Valor\n06/2026,08/2026,`;
+    const result = parseImpostosCSV(csv);
+    expect(result.size).toBe(0);
+  });
+
+  it("retorna Map vazio para texto vazio", () => {
+    expect(parseImpostosCSV("").size).toBe(0);
+    expect(parseImpostosCSV(null).size).toBe(0);
+  });
+});

@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { RefreshCw, FileText } from "lucide-react";
 import YieldView from "./YieldView";
+import ImpostosView from "./ImpostosView";
 import { LineChart, Line, BarChart, Bar, Cell, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine, Legend } from "recharts";
 import { useSheetData } from "../../hooks/useSheetData";
 import {
@@ -20,6 +21,7 @@ import {
 import { Edit3, RotateCcw } from "lucide-react";
 import { UG_NOMES } from "../../config";
 import FormularioRateio from "../../components/FormularioRateio";
+import KpiBox from "../../components/KpiBox";
 
 // ─── Helpers ─────────────────────────────────────────────────
 function fmtBRL(v) {
@@ -65,17 +67,6 @@ function NavBtn({ ativo, onClick, children }) {
   );
 }
 
-function StatBox({ label, valor, cor = "#152a22", onClick }) {
-  const base = "border border-stone-200 bg-white shadow-auri-sm rounded-md px-5 py-4";
-  const extra = onClick ? "cursor-pointer hover:border-stone-400/60 hover:shadow-auri-md transition-all" : "";
-  return (
-    <div className={`${base} ${extra}`} onClick={onClick}>
-      <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
-      <div className="text-4xl font-extrabold tracking-tight" style={{ color: cor }}>{valor}</div>
-    </div>
-  );
-}
-
 function Alerta({ cor, texto }) {
   const c = {
     red:    "bg-terra-100/60 border-terra-500/40 text-terra-600",
@@ -86,17 +77,6 @@ function Alerta({ cor, texto }) {
   return <div className={`${c} border px-4 py-3 text-sm`}>{texto}</div>;
 }
 
-function MetricaBox({ label, valor, unidade, cor = "#152a22" }) {
-  return (
-    <div className="border border-stone-200 bg-white shadow-auri-sm rounded-md p-4">
-      <div className="text-[10px] uppercase tracking-[0.18em] text-stone-600 mb-2 font-mono">{label}</div>
-      <div className="flex items-baseline gap-1.5">
-        <span className="text-2xl font-extrabold tracking-tight" style={{ color: cor }}>{valor}</span>
-        {unidade && <span className="text-xs text-stone-600">{unidade}</span>}
-      </div>
-    </div>
-  );
-}
 
 // ─── Evolução: gráfico de linha genérico ─────────────────────
 // series = [{ key, label, cor }]. data = linhas do histórico (mes_ref + campos).
@@ -906,10 +886,10 @@ function TelaUGDetalhe({ ug, planoGlobal, onVoltar, onClickCliente }) {
         )}
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <MetricaBox label="Capacidade" valor={cap.toFixed(0)} unidade="kWh/mês" />
-        <MetricaBox label="Demanda (soma CMC)" valor={totalCMC.toFixed(0)} unidade="kWh/mês" />
-        <MetricaBox label="Carregamento" valor={`${car.toFixed(0)}%`} cor={car < 85 ? "#c98a1f" : car > 105 ? "#a8482a" : "#2f7a52"} />
-        <MetricaBox label={ug.tipo === "GD2" ? "Saldo travado (geradora)" : "Saldo UC geradora"} valor={ucGer ? (ucGer.saldo||0).toFixed(0) : "—"} unidade="kWh" cor="#6b6357" />
+        <KpiBox label="Capacidade" valor={cap.toFixed(0)} unidade="kWh/mês" />
+        <KpiBox label="Demanda (soma CMC)" valor={totalCMC.toFixed(0)} unidade="kWh/mês" />
+        <KpiBox label="Carregamento" valor={`${car.toFixed(0)}%`} cor={car < 85 ? "#c98a1f" : car > 105 ? "#a8482a" : "#2f7a52"} />
+        <KpiBox label={ug.tipo === "GD2" ? "Saldo travado (geradora)" : "Saldo UC geradora"} valor={ucGer ? (ucGer.saldo||0).toFixed(0) : "—"} unidade="kWh" cor="#6b6357" />
       </div>
       {ucGer && (
         <div className="mb-8 border border-sun-400 bg-sun-100/70 p-5">
@@ -3193,8 +3173,8 @@ export default function PainelModule() {
   };
   const [formularioRateio, setFormularioRateio] = useState(null); // { ug, cenario }
 
-  const { clientes, ugsValidadas, planoGlobal, historico, resultados } = data || {
-    clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} }, historico: [], resultados: { ugResults: null, distributions: [] },
+  const { clientes, ugsValidadas, planoGlobal, historico, resultados, impostosPorMes } = data || {
+    clientes: [], ugsValidadas: [], planoGlobal: { por_ug: {}, realocar: [], alocacao_inicial: [], sinalizar: [], resumo: {} }, historico: [], resultados: { ugResults: null, distributions: [] }, impostosPorMes: new Map(),
   };
 
   const stats = useMemo(() => {
@@ -3277,19 +3257,20 @@ export default function PainelModule() {
             <NavBtn ativo={aba === "ltv"} onClick={() => setAba("ltv")}>LTV</NavBtn>
             <NavBtn ativo={aba === "inadimplencia"} onClick={() => setAba("inadimplencia")}>Inadimplência</NavBtn>
             <NavBtn ativo={aba === "evolucao"} onClick={() => setAba("evolucao")}>Evolução</NavBtn>
+            <NavBtn ativo={aba === "impostos"} onClick={() => setAba("impostos")}>Impostos</NavBtn>
             <NavBtn ativo={aba === "yield"} onClick={() => setAba("yield")}>Yield</NavBtn>
           </div>
         </div>
       </header>
 
       <main className="max-w-[1400px] mx-auto px-6 py-8">
-        {aba !== "yield" && (
+        {aba !== "yield" && aba !== "impostos" && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-          <StatBox label="Clientes ativos"   valor={stats.total}      onClick={() => irParaClientes({ atividade: "ativos" })} />
-          <StatBox label="Saldo crítico"      valor={stats.criticos}   cor="#a8482a" onClick={() => irParaClientes({ status: "critico" })} />
-          <StatBox label="Saldo excessivo"    valor={stats.excessivos} cor="#6d4a8c" onClick={() => irParaClientes({ status: "excessivo" })} />
-          <StatBox label="Travamento anormal" valor={stats.travados}   cor="#c98a1f" onClick={() => irParaClientes({ especial: "travamento" })} />
-          <StatBox label="Sem UG alocada"     valor={stats.semUG}      cor="#2f6690" onClick={() => irParaClientes({ ug: "null" })} />
+          <KpiBox label="Clientes ativos"   valor={stats.total}      onClick={() => irParaClientes({ atividade: "ativos" })} />
+          <KpiBox label="Saldo crítico"      valor={stats.criticos}   cor="#a8482a" onClick={() => irParaClientes({ status: "critico" })} />
+          <KpiBox label="Saldo excessivo"    valor={stats.excessivos} cor="#6d4a8c" onClick={() => irParaClientes({ status: "excessivo" })} />
+          <KpiBox label="Travamento anormal" valor={stats.travados}   cor="#c98a1f" onClick={() => irParaClientes({ especial: "travamento" })} />
+          <KpiBox label="Sem UG alocada"     valor={stats.semUG}      cor="#2f6690" onClick={() => irParaClientes({ ug: "null" })} />
         </div>
         )}
 
@@ -3358,6 +3339,7 @@ export default function PainelModule() {
           <TelaInadimplencia clientes={clientes} onClickCliente={setClienteSel} />
         )}
         {aba === "evolucao" && <TelaEvolucao historico={historico} />}
+        {aba === "impostos" && <ImpostosView clientes={clientes} impostosPorMes={impostosPorMes} />}
         {aba === "yield" && <YieldView resultados={resultados} loading={loading} refresh={refresh} />}
       </main>
 

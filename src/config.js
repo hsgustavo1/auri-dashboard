@@ -7,6 +7,11 @@ export const SHEET_URLS = {
   legado:       "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=395095854&single=true&output=csv",
   historico:    "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=322053351&single=true&output=csv",
   resultados:   "https://docs.google.com/spreadsheets/d/e/2PACX-1vSDWEaqdJrixxlMrH7Nzd1bkoFR-wN84h0bzDqAE4SGDAHKRWFzmS9lxNFzZBTLiGFND84vBTcvYnv2/pub?gid=527983481&single=true&output=csv",
+  // Aba "Impostos": Mês referência / Mês pagamento / Valor. Não faz parte do
+  // snapshot "publish to web" acima — usa o endpoint de export direto do
+  // documento original (funciona porque a planilha é compartilhada "qualquer
+  // pessoa com o link pode ver").
+  impostos:     "https://docs.google.com/spreadsheets/d/1_VjDgM9locq2Bs1gWWmXbE_JcnaJF7QL5u8bHWvGCXc/export?format=csv&gid=1639096498",
 };
 
 export const TIPO_GD = {

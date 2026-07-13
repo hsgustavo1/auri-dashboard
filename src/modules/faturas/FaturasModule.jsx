@@ -5,6 +5,21 @@ import FaturaMatrix from "./FaturaMatrix";
 import FaturaHeatmap from "./FaturaHeatmap";
 import FaturaDetalhe from "./FaturaDetalhe";
 
+function NavBtn({ ativo, onClick, children }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 text-xs uppercase tracking-[0.18em] rounded-pill transition-colors ${
+        ativo
+          ? "bg-sun-400 text-forest-900 font-bold"
+          : "text-stone-500 hover:text-ink hover:bg-stone-100"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
 const TABS = [
   { id: "geral",   label: "Visão Geral" },
   { id: "detalhe", label: "Detalhe" },
@@ -67,20 +82,15 @@ export default function FaturasModule() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-5 border-b border-forest-900/20">
+      <div className="flex gap-2 mb-5">
         {TABS.map(tab => (
-          <button
+          <NavBtn
             key={tab.id}
+            ativo={activeTab === tab.id}
             onClick={() => { setActiveTab(tab.id); if (tab.id === "geral") setFiltro(null); }}
-            className={[
-              "px-4 py-2 text-sm transition-colors -mb-px border-b-2",
-              activeTab === tab.id
-                ? "border-forest-700 text-forest-900 font-medium"
-                : "border-transparent text-forest-400 hover:text-forest-600",
-            ].join(" ")}
           >
             {tab.label}
-          </button>
+          </NavBtn>
         ))}
       </div>
 

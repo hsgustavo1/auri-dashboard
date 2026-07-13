@@ -191,6 +191,20 @@ export function parseHistorico(text) {
     .sort((a, b) => String(a.mes_ref).localeCompare(String(b.mes_ref)));
 }
 
+export function parseImpostosCSV(text) {
+  if (!text || !text.trim()) return new Map();
+  const rows = parseCSV(text);
+  const out = new Map();
+  rows.forEach(r => {
+    const mes = (r["Mês referência"] || "").trim();
+    if (!RE_MES.test(mes)) return;
+    const valor = parseBR(r["Valor"]);
+    if (valor == null) return;
+    out.set(mes, valor);
+  });
+  return out;
+}
+
 export function parseClientes(text) {
   const rows = parseCSV(text);
   return rows
